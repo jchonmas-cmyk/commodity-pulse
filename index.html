@@ -1,0 +1,631 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Commodity Pulse</title>
+<style>
+[hidden]{display:none!important}
+html{-webkit-text-size-adjust:100%}
+body{margin:0}
+/* Layout: one narrow column, mobile first. Hero summary, one filter row, grouped rows that expand into a chart, then context and glossary. */
+:root{
+  color-scheme:light;
+  --bg:#f9f9f7; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,.10);
+  --s1:#2a78d6; --s2:#eb6834;
+  --up:#2a78d6; --down:#e34948; --flat:#c3c2b7;
+  --up-ink:#1c5cab; --down-ink:#d03b3b;
+  --shadow:0 2px 10px rgba(11,11,11,.14);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781;
+    --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+    --s1:#3987e5; --s2:#d95926;
+    --up:#3987e5; --down:#e66767; --flat:#4a4944;
+    --up-ink:#6da7ec; --down-ink:#e66767;
+    --shadow:0 2px 10px rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0d0d0d; --surface:#1a1a19; --ink:#f0efec; --ink2:#c3c2b7; --muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,.10);
+  --s1:#3987e5; --s2:#d95926;
+  --up:#3987e5; --down:#e66767; --flat:#4a4944;
+  --up-ink:#6da7ec; --down-ink:#e66767;
+  --shadow:0 2px 10px rgba(0,0,0,.5);
+}
+*{box-sizing:border-box}
+body{
+  background:var(--bg);color:var(--ink);
+  font:15px/1.5 system-ui,-apple-system,"Segoe UI","PingFang SC","Noto Sans SC","Microsoft YaHei",sans-serif;
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:calc(20px + env(safe-area-inset-top,0px)) calc(56px + env(safe-area-inset-bottom,0px));
+}
+.wrap{max-width:720px;margin:0 auto}
+button{font:inherit;color:inherit;cursor:pointer}
+:focus-visible{outline:2px solid var(--s1);outline-offset:2px;border-radius:6px}
+h1{font-size:24px;line-height:1.2;margin:0;font-weight:650;letter-spacing:-.01em}
+h2{font-size:13px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink2);margin:0;font-weight:600}
+p{margin:0}
+.sub{color:var(--ink2);font-size:13px;margin-top:2px}
+
+.top{display:flex;flex-wrap:wrap;gap:12px 16px;align-items:flex-start;justify-content:space-between}
+.ctrls{display:flex;flex-wrap:wrap;gap:8px}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;padding:2px;background:var(--surface)}
+.seg button{border:0;background:none;color:var(--ink2);padding:6px 11px;border-radius:8px;font-size:13px;min-height:36px}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--surface);font-weight:600}
+.note{margin-top:14px;font-size:13px;color:var(--ink2);border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface)}
+.note b{color:var(--ink)}
+
+.hero{margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:18px}
+.big{font-size:56px;font-weight:650;line-height:1;letter-spacing:-.02em}
+.big small{font-size:28px;font-weight:500;color:var(--ink2);letter-spacing:0}
+.hero .lead{margin-top:8px;font-size:16px;font-weight:550}
+.hero .help{margin-top:4px;font-size:13px;color:var(--ink2)}
+.segbar{display:flex;gap:2px;height:8px;margin-top:16px}
+.segbar i{display:block;border-radius:999px}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:10px;font-size:13px;color:var(--ink2)}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{display:inline-block;width:10px;height:10px;border-radius:3px}
+.key{display:inline-block;width:14px;height:2px;border-radius:1px;vertical-align:middle}
+
+.filters{display:flex;flex-wrap:wrap;gap:10px 18px;justify-content:space-between;margin-top:22px}
+.fg{display:flex;flex-wrap:wrap;gap:6px}
+.chip{border:1px solid var(--border);background:var(--surface);color:var(--ink2);border-radius:999px;padding:6px 12px;font-size:13px;min-height:36px}
+.chip[aria-pressed="true"]{background:var(--ink);color:var(--surface);border-color:var(--ink);font-weight:600}
+
+.grp{margin-top:22px}
+.grp>h2{display:flex;align-items:baseline;gap:8px;margin-bottom:8px}
+.grp>h2 span{font-weight:400;color:var(--muted)}
+.list{background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden}
+.item+.item{border-top:1px solid var(--grid)}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 76px auto;gap:2px 12px;align-items:center;width:100%;text-align:left;background:none;border:0;padding:12px 14px}
+.row:hover{background:color-mix(in srgb,var(--ink) 4%,transparent)}
+.c1{display:flex;flex-direction:column;gap:5px;min-width:0}
+.nm{font-weight:600;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.unit{font-weight:400;font-size:12px;color:var(--ink2)}
+.nn{display:inline-flex;align-items:center;gap:6px}
+.chev{width:12px;height:12px;stroke:var(--ink2);fill:none;stroke-width:2;flex:none;transition:transform .15s}
+.row[aria-expanded="true"] .chev{transform:rotate(180deg)}
+.c3{display:flex;flex-direction:column;align-items:flex-end;gap:2px;font-variant-numeric:tabular-nums}
+.px{font-weight:650}
+.chg{font-size:13px}
+.txt{grid-column:1/-1;margin-top:6px;font-size:13px;color:var(--ink2)}
+.pos{color:var(--up-ink)} .neg{color:var(--down-ink)}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:2px 8px;border-radius:999px;width:fit-content;line-height:1.5}
+.pill svg{width:9px;height:9px;fill:currentColor}
+.pill.up{color:var(--up-ink);background:color-mix(in srgb,var(--up) 14%,transparent)}
+.pill.down{color:var(--down-ink);background:color-mix(in srgb,var(--down) 14%,transparent)}
+.pill.flat{color:var(--ink2);background:color-mix(in srgb,var(--flat) 40%,transparent)}
+.spark{display:block}
+.sp-line{fill:none;stroke:var(--s1);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.sp-area{fill:var(--s1);opacity:.1}
+.sp-dot{fill:var(--s1);stroke:var(--surface);stroke-width:2}
+
+.detail{padding:2px 14px 16px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(108px,1fr));gap:10px 12px}
+.st{display:flex;flex-direction:column}
+.sl{font-size:12px;color:var(--ink2)}
+.sv{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+.bd{margin-top:12px;font-size:13px;color:var(--ink2);display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.bd b{color:var(--ink)}
+.watch{margin-top:12px;font-size:13px;color:var(--ink2)}
+.watch b{color:var(--ink)}
+.chart{position:relative;margin-top:14px}
+.chart svg{display:block;width:100%;touch-action:pan-y;user-select:none}
+.chart svg:focus-visible{outline-offset:0}
+.ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.gl{stroke:var(--grid);stroke-width:1}
+.ax{stroke:var(--axis);stroke-width:1}
+.tk{fill:var(--muted);font-size:11px}
+.tip{position:absolute;top:6px;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 9px;font-size:12px;box-shadow:var(--shadow);white-space:nowrap}
+.tip .d{color:var(--ink2);margin-bottom:2px}
+.tip .r{display:flex;align-items:center;gap:7px}
+.tip .r b{font-size:13px;font-variant-numeric:tabular-nums}
+.tip .r span.n{color:var(--ink2)}
+.lg{display:flex;flex-wrap:wrap;gap:4px 16px;margin-top:6px;font-size:12px;color:var(--ink2)}
+.lg span{display:inline-flex;align-items:center;gap:6px}
+details.tb{margin-top:10px;font-size:13px}
+details.tb summary{cursor:pointer;color:var(--ink2);min-height:32px;display:flex;align-items:center}
+.tbw{overflow-x:auto;margin-top:4px}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:5px 8px;border-bottom:1px solid var(--grid);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-weight:600;color:var(--ink2);font-size:12px}
+
+.ctxi{padding:13px 14px}
+.ctxi+.ctxi{border-top:1px solid var(--grid)}
+.ch{display:flex;justify-content:space-between;gap:12px;align-items:baseline}
+.cn{font-weight:600;min-width:0}
+.cv{font-variant-numeric:tabular-nums;text-align:right;font-weight:650;white-space:nowrap}
+.cv small{font-weight:400;font-size:13px;margin-left:6px}
+.cm{display:flex;flex-wrap:wrap;gap:6px 10px;align-items:center;margin-top:6px}
+.tag{font-size:12px;color:var(--ink2)}
+.ctxi p{margin-top:6px;font-size:13px;color:var(--ink2)}
+.sec{margin-top:26px}
+.sec>.sub{margin:2px 0 10px}
+.term{background:none;border:0;padding:0;font:inherit;color:inherit;border-bottom:1px dotted var(--ink2);cursor:help;text-align:left}
+details.g{padding:0 14px}
+details.g+details.g{border-top:1px solid var(--grid)}
+details.g summary{cursor:pointer;font-weight:600;min-height:44px;display:flex;align-items:center}
+details.g p{font-size:14px;color:var(--ink2);padding-bottom:12px}
+.foot{margin-top:26px;font-size:12px;color:var(--ink2)}
+.foot p+p{margin-top:6px}
+
+.sheet{position:fixed;inset:0;z-index:30;display:flex;align-items:flex-end;background:rgba(0,0,0,.45)}
+.sheet[hidden]{display:none}
+.sheet .panel{background:var(--surface);width:100%;max-width:720px;margin:0 auto;border-radius:16px 16px 0 0;max-height:70vh;overflow:auto;
+  padding:20px max(16px,env(safe-area-inset-right,0px)) calc(20px + env(safe-area-inset-bottom,0px)) max(16px,env(safe-area-inset-left,0px))}
+.sheet h3{margin:0 0 6px;font-size:18px}
+.sheet p{color:var(--ink2);margin-bottom:14px}
+@media (prefers-reduced-motion:reduce){.chev{transition:none}}
+@media (max-width:380px){.big{font-size:48px}.row{grid-template-columns:minmax(0,1fr) 64px auto}}
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="panel" role="dialog" aria-modal="true" aria-labelledby="sh-t">
+    <h3 id="sh-t"></h3>
+    <p id="sh-d"></p>
+    <button class="chip" id="sh-x" data-act="close"></button>
+  </div>
+</div>
+
+<script>
+(function(){
+'use strict';
+//#PURE-START
+var END=new Date(Date.UTC(2026,10,18));
+var N=260;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){var u=0,v=0;while(!u)u=r();while(!v)v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+function bizDates(){var out=[],d=new Date(END);while(out.length<N){var w=d.getUTCDay();if(w!==0&&w!==6)out.push(new Date(d));d.setUTCDate(d.getUTCDate()-1)}return out.reverse()}
+var DATES=bizDates();
+var YTD0=DATES.findIndex(function(d){return d.getUTCFullYear()===2026});
+/* Demo universe: price, daily volatility, long drift, extra drift over the last 25 sessions */
+var COMMS=[
+ {id:'brent',grp:'energy',tk:'BZ=F',unit:'$/bbl',dec:2,price:63.84,vol:.016,drift:-.0002,late:-.0045,seed:11},
+ {id:'wti',grp:'energy',tk:'CL=F',unit:'$/bbl',dec:2,price:59.92,vol:.017,drift:-.0002,late:-.004,seed:12},
+ {id:'natgas',grp:'energy',tk:'NG=F',unit:'$/MMBtu',dec:3,price:4.352,vol:.028,drift:.0003,late:.007,seed:13},
+ {id:'gold',grp:'precious',tk:'GC=F',unit:'$/oz',dec:1,price:4085.4,vol:.009,drift:.0006,late:.003,seed:21},
+ {id:'silver',grp:'precious',tk:'SI=F',unit:'$/oz',dec:2,price:50.18,vol:.016,drift:.0006,late:.0045,seed:22},
+ {id:'platinum',grp:'precious',tk:'PL=F',unit:'$/oz',dec:1,price:1584.3,vol:.014,drift:.0002,late:0,seed:23},
+ {id:'copper',grp:'industrial',tk:'HG=F',unit:'$/lb',dec:3,price:5.184,vol:.012,drift:.0003,late:.0035,seed:31},
+ {id:'alu',grp:'industrial',tk:'ALI=F',unit:'$/t',dec:0,price:2852,vol:.008,drift:.0001,late:0,seed:32},
+ {id:'wheat',grp:'agri',tk:'ZW=F',unit:'¢/bu',dec:2,price:531.25,vol:.013,drift:-.0002,late:-.0035,seed:41},
+ {id:'corn',grp:'agri',tk:'ZC=F',unit:'¢/bu',dec:2,price:436.5,vol:.011,drift:0,late:.0015,seed:42},
+ {id:'soy',grp:'agri',tk:'ZS=F',unit:'¢/bu',dec:2,price:1118.75,vol:.01,drift:.0001,late:.0004,seed:43},
+ {id:'coffee',grp:'agri',tk:'KC=F',unit:'¢/lb',dec:2,price:381.4,vol:.02,drift:.0002,late:-.0065,seed:44},
+ {id:'sugar',grp:'agri',tk:'SB=F',unit:'¢/lb',dec:2,price:15.24,vol:.014,drift:-.0002,late:.0002,seed:45},
+ {id:'cocoa',grp:'agri',tk:'CC=F',unit:'$/t',dec:0,price:5412,vol:.024,drift:-.0003,late:-.0075,seed:46}
+];
+function series(c){var r=mulberry32(c.seed),v=[1];for(var i=1;i<N;i++){var dr=c.drift+(i>=N-25?c.late:0);v.push(v[i-1]*Math.exp(dr+c.vol*gauss(r)))}var k=c.price/v[N-1];return v.map(function(x){return x*k})}
+function sma(a,n,i){if(i<n-1)return null;var s=0;for(var j=i-n+1;j<=i;j++)s+=a[j];return s/n}
+function rsi(a,n){var g=0,l=0,i,d;for(i=1;i<=n;i++){d=a[i]-a[i-1];if(d>=0)g+=d;else l-=d}g/=n;l/=n;for(i=n+1;i<a.length;i++){d=a[i]-a[i-1];g=(g*(n-1)+Math.max(d,0))/n;l=(l*(n-1)+Math.max(-d,0))/n}return l===0?100:100-100/(1+g/l)}
+function analyze(a,y0){
+ var L=a.length-1,px=a[L],ma=sma(a,20,L);
+ var ch=function(k){return(px/a[L-k]-1)*100};
+ var rets=[],i;for(i=L-19;i<=L;i++)rets.push(Math.log(a[i]/a[i-1]));
+ var mean=rets.reduce(function(x,y){return x+y},0)/rets.length;
+ var sd=Math.sqrt(rets.reduce(function(x,y){return x+(y-mean)*(y-mean)},0)/(rets.length-1));
+ var r=rsi(a,14),gap=(px/ma-1)*100,c5=ch(5),z=c5/100/(sd*Math.sqrt(5));
+ var trend=gap>0.5?1:gap<-0.5?-1:0,mom=r>55?1:r<45?-1:0,spd=z>1?1:z<-1?-1:0,score=trend+mom+spd;
+ return{px:px,ma:ma,c1:ch(1),c5:c5,c21:ch(21),ytd:(px/a[y0]-1)*100,rsi:r,vol:sd*Math.sqrt(252)*100,gap:gap,trend:trend,mom:mom,spd:spd,score:score,label:score>=2?'up':score<=-2?'down':'flat'};
+}
+function demoData(){return COMMS.map(function(c){var s=series(c);var o=Object.assign({},c);o.s=s;o.dates=DATES;o.n=N;o.y0=YTD0;o.a=analyze(s,YTD0);return o})}
+//#PURE-END
+
+/* ---------- Context definitions ---------- */
+var CTXDEF=[
+ {id:'dxy',kind:'pct',dec:2,src:'Yahoo · DX-Y.NYB',freq:'daily'},
+ {id:'real',kind:'pt',dec:2,src:'FRED · DFII10',freq:'daily'},
+ {id:'vix',kind:'pct',dec:1,src:'Yahoo · ^VIX',freq:'daily'},
+ {id:'cny',kind:'pct',dec:4,src:'Yahoo · CNY=X',freq:'daily'},
+ {id:'eia',kind:'eia',dec:1,src:'FRED · WCESTUS1 (EIA)',freq:'weekly'},
+ {id:'cot',kind:'cot',dec:0,src:'CFTC · COT',freq:'weekly'}
+];
+var DEMOCTX={dxy:{v:99.42,chg:-0.31},real:{v:1.85,chg:0.04},vix:{v:17.8,chg:-4.1},cny:{v:7.08,chg:-0.12},eia:{v:430,chg:2.1},cot:{v:78,chg:null}};
+function impact(id,d){
+ var v=d.v,c=d.chg;
+ if(id==='dxy'||id==='cny')return c<-0.1?'sup':c>0.1?'weigh':'neu';
+ if(id==='real')return c<-0.02?'sup':c>0.02?'weigh':'neu';
+ if(id==='vix')return v<20?'sup':v>28?'weigh':'neu';
+ if(id==='eia')return c>0.5?'weigh':c<-0.5?'sup':'neu';
+ if(id==='cot')return v>80?'weigh':v<20?'sup':'neu';
+ return 'neu';
+}
+function ctxItems(){
+ var src=(STATUS==='live'&&LIVE&&LIVE.ctx)?LIVE.ctx:DEMOCTX;
+ return CTXDEF.filter(function(x){return src[x.id]&&src[x.id].v!=null}).map(function(x){return Object.assign({d:src[x.id]},x)});
+}
+var GL=['score','ma20','rsi','vol','bull','fut','contango','back','cot','dxy','real','stocks'];
+var GROUPS=['energy','precious','industrial','agri'];
+
+/* ---------- Translations ---------- */
+var T={
+fr:{
+ demo:'Données de démonstration',
+ demoNote:'Les prix affichés sont fictifs : les données réelles n’ont pas encore été publiées. Elles apparaîtront automatiquement dès que la collecte aura tourné.',upd:'Mis à jour le',old:'Ces données ont plus d’un jour : la collecte est peut-être en panne.',load:'Chargement des données…',stale:'donnée ancienne',
+ mode:'Niveau',beginner:'Débutant',trader:'Trader',
+ heroLead:'matières premières au-dessus de leur moyenne 20 jours',
+ heroHelp:'Plus le chiffre est élevé, plus le marché est porteur à court terme.',
+ up:'Haussier',flat:'Neutre',down:'Baissier',
+ all:'Tout',energy:'Énergie',precious:'Métaux précieux',industrial:'Métaux industriels',agri:'Agricoles',
+ r1m:'1 mois',r3m:'3 mois',rytd:'Depuis janvier',
+ sUp:'Le prix monte et reste au-dessus de sa moyenne : les acheteurs ont la main.',
+ sFlat:'Pas de direction claire : le prix hésite autour de sa moyenne.',
+ sDown:'Le prix baisse sous sa moyenne : les vendeurs ont la main.',
+ hot:'Il a beaucoup monté vite : une pause est possible.',
+ cold:'Il a beaucoup chuté : un rebond est possible.',
+ d1:'1 jour',w1:'1 semaine',m1:'1 mois',ytd:'Depuis janvier',rsi:'RSI 14',gap:'Écart à la moyenne',vol:'Volatilité annuelle',d5:'5 j',
+ scoreTitle:'Calcul du signal',trend:'Tendance',mom:'Élan',spd:'Vitesse',total:'Score',
+ watch:'À surveiller',price:'Prix',ma:'Moyenne 20 j',table:'Voir les données (tableau)',date:'Date',close:'Clôture',avg:'Moyenne',
+ ctx:'Le contexte',ctxSub:'Ce qui pousse toutes les matières premières en même temps.',
+ sup:'Soutient les prix',weigh:'Pèse sur les prix',neu:'Neutre',daily:'quotidien',weekly:'hebdomadaire',
+ gloss:'Glossaire',glossSub:'Touchez un mot souligné ailleurs sur la page pour le voir ici.',close_:'Fermer',
+ sources:'Sources prévues',disc:'Informations générales, pas un conseil en investissement. Les données gratuites sont différées d’environ 15 minutes.',
+ asof:'Données de démonstration au',
+ eiaUnit:'M bbl',cotVal:function(n){return n+'e centile'},
+ names:{brent:'Brent',wti:'WTI',natgas:'Gaz naturel',gold:'Or',silver:'Argent',platinum:'Platine',copper:'Cuivre',alu:'Aluminium',wheat:'Blé',corn:'Maïs',soy:'Soja',coffee:'Café',sugar:'Sucre',cocoa:'Cacao'},
+ watchTxt:{brent:'OPEP+, stocks US, géopolitique',wti:'Stocks de Cushing, production US',natgas:'Météo, stockage US, exportations de GNL',gold:'Taux réels, dollar, achats des banques centrales',silver:'Or, demande industrielle (solaire)',platinum:'Industrie automobile, offre sud-africaine',copper:'Économie chinoise, stocks du LME',alu:'Coût de l’énergie, production chinoise',wheat:'Météo, mer Noire, rapport USDA',corn:'Météo US, éthanol, exportations',soy:'Demande chinoise, récolte brésilienne',coffee:'Météo au Brésil, stocks certifiés',sugar:'Mousson indienne, éthanol brésilien',cocoa:'Récoltes de Côte d’Ivoire et du Ghana'},
+ ctxN:{dxy:['Dollar américain (DXY)','dxy'],real:['Taux réel US à 10 ans','real'],vix:['VIX (indice de la peur)',''],cny:['Dollar / yuan',''],eia:['Stocks de pétrole US (EIA)','stocks'],cot:['Fonds spéculatifs sur l’or (CFTC)','cot']},
+ ctxT:{
+ dxy:{sup:'Dollar en baisse : les matières premières, cotées en dollars, coûtent moins cher au reste du monde.',weigh:'Dollar en hausse : les matières premières, cotées en dollars, coûtent plus cher au reste du monde.',neu:'Dollar stable : peu de pression dans un sens ou dans l’autre.'},
+ real:{sup:'Taux réels en baisse : l’or, qui ne rapporte aucun intérêt, devient plus attractif.',weigh:'Taux réels en hausse : l’or, qui ne rapporte aucun intérêt, devient moins attractif.',neu:'Taux réels stables : peu d’effet sur l’or.'},
+ vix:{sup:'Marchés calmes : les investisseurs acceptent plus de risque.',weigh:'Marchés nerveux : les investisseurs réduisent le risque, ce qui pèse sur l’énergie et les métaux industriels.',neu:'Nervosité modérée : pas de signal net.'},
+ cny:{sup:'Yuan plus fort : la Chine, premier acheteur de métaux, paie moins cher ses importations.',weigh:'Yuan plus faible : la Chine, premier acheteur de métaux, paie plus cher ses importations.',neu:'Yuan stable : peu d’effet sur la demande chinoise.'},
+ eia:{sup:'Stocks en baisse sur la semaine : la demande dépasse l’offre, ce qui soutient le pétrole.',weigh:'Stocks en hausse sur la semaine : l’offre dépasse la demande, ce qui pèse sur le pétrole.',neu:'Stocks stables sur la semaine : pas de signal net.'},
+ cot:{sup:'Peu de fonds sont acheteurs : il reste de la place pour de nouveaux achats.',weigh:'Beaucoup de fonds sont déjà acheteurs : il reste peu de nouveaux acheteurs possibles.',neu:'Position des fonds équilibrée : pas de signal net.'}},
+ g:{
+  score:['Score du signal','Somme de trois mesures simples, de -3 à +3 : tendance (prix par rapport à la moyenne 20 jours), élan (RSI) et vitesse (variation sur 5 jours). +2 ou plus : haussier. -2 ou moins : baissier. Entre les deux : neutre. Le signal décrit ce que fait le prix, il ne prédit rien.'],
+  ma20:['Moyenne 20 jours','Le prix moyen des 20 dernières séances. Au-dessus, la tendance courte est plutôt haussière ; en dessous, plutôt baissière.'],
+  rsi:['RSI','Indice de 0 à 100 qui compare la force des hausses récentes à celle des baisses. Au-dessus de 70, le prix a beaucoup monté et une pause est possible. Sous 30, il a beaucoup chuté et un rebond est possible.'],
+  vol:['Volatilité','À quel point le prix bouge, en % par an. Plus elle est haute, plus les gains et les pertes peuvent être importants.'],
+  bull:['Haussier / baissier','Haussier : on s’attend à ce que le prix monte. Baissier : on s’attend à ce qu’il baisse.'],
+  fut:['Contrat à terme','Contrat d’achat ou de vente d’une quantité de matière première, à une date et un prix fixés d’avance. Les cours affichés ici sont ceux du contrat le plus proche.'],
+  contango:['Contango','Les contrats lointains coûtent plus cher que le contrat proche. Souvent le signe d’un marché bien approvisionné.'],
+  back:['Backwardation','Les contrats lointains coûtent moins cher que le contrat proche. Souvent le signe d’un manque de matière aujourd’hui.'],
+  cot:['COT (CFTC)','Rapport hebdomadaire de la CFTC sur les positions des fonds et des producteurs. Il montre si les fonds parient plutôt sur la hausse ou sur la baisse.'],
+  dxy:['Indice dollar (DXY)','Valeur du dollar face à un panier de grandes devises. Un dollar plus fort rend les matières premières plus chères pour les acheteurs hors des États-Unis.'],
+  real:['Taux réel','Taux d’intérêt moins l’inflation attendue. Quand il monte, l’or perd de son attrait car il ne verse aucun intérêt.'],
+  stocks:['Stocks','Quantités mises en réserve. Des stocks en hausse indiquent plus d’offre que de demande ; en baisse, c’est l’inverse.']
+ }
+},
+en:{
+ demo:'Demo data',
+ demoNote:'Prices shown are made up: real data has not been published yet. It will appear automatically once the collector has run.',upd:'Updated',old:'This data is over a day old: the collector may be down.',load:'Loading data…',stale:'stale data',
+ mode:'Level',beginner:'Beginner',trader:'Trader',
+ heroLead:'commodities above their 20-day average',
+ heroHelp:'The higher the number, the stronger the market looks in the short term.',
+ up:'Bullish',flat:'Neutral',down:'Bearish',
+ all:'All',energy:'Energy',precious:'Precious metals',industrial:'Industrial metals',agri:'Agriculture',
+ r1m:'1 month',r3m:'3 months',rytd:'Year to date',
+ sUp:'Price is rising and holding above its average: buyers are in control.',
+ sFlat:'No clear direction: price is hovering around its average.',
+ sDown:'Price is falling below its average: sellers are in control.',
+ hot:'It has run up fast, so a pause is possible.',
+ cold:'It has dropped a lot, so a rebound is possible.',
+ d1:'1 day',w1:'1 week',m1:'1 month',ytd:'Year to date',rsi:'RSI 14',gap:'Gap to average',vol:'Annual volatility',d5:'5d',
+ scoreTitle:'How the signal is built',trend:'Trend',mom:'Momentum',spd:'Speed',total:'Score',
+ watch:'Watch',price:'Price',ma:'20-day avg',table:'See the data (table)',date:'Date',close:'Close',avg:'Average',
+ ctx:'Big picture',ctxSub:'What moves all commodities at once.',
+ sup:'Supports prices',weigh:'Weighs on prices',neu:'Neutral',daily:'daily',weekly:'weekly',
+ gloss:'Glossary',glossSub:'Tap an underlined word elsewhere on the page to see it here.',close_:'Close',
+ sources:'Planned sources',disc:'General information, not investment advice. Free data is delayed by about 15 minutes.',
+ asof:'Demo data as of',
+ eiaUnit:'M bbl',cotVal:function(n){var s=n%10===1&&n!==11?'st':n%10===2&&n!==12?'nd':n%10===3&&n!==13?'rd':'th';return n+s+' percentile'},
+ names:{brent:'Brent',wti:'WTI',natgas:'Natural gas',gold:'Gold',silver:'Silver',platinum:'Platinum',copper:'Copper',alu:'Aluminum',wheat:'Wheat',corn:'Corn',soy:'Soybeans',coffee:'Coffee',sugar:'Sugar',cocoa:'Cocoa'},
+ watchTxt:{brent:'OPEC+, US stocks, geopolitics',wti:'Cushing stocks, US output',natgas:'Weather, US storage, LNG exports',gold:'Real yields, dollar, central bank buying',silver:'Gold, industrial demand (solar)',platinum:'Auto industry, South African supply',copper:'China’s economy, LME stocks',alu:'Energy costs, China output',wheat:'Weather, Black Sea, USDA report',corn:'US weather, ethanol, exports',soy:'China demand, Brazil crop',coffee:'Brazil weather, certified stocks',sugar:'Indian monsoon, Brazil ethanol',cocoa:'Ivory Coast and Ghana crops'},
+ ctxN:{dxy:['US dollar (DXY)','dxy'],real:['US 10-year real yield','real'],vix:['VIX (fear gauge)',''],cny:['USD / CNY',''],eia:['US crude stocks (EIA)','stocks'],cot:['Fund positioning in gold (CFTC)','cot']},
+ ctxT:{
+ dxy:{sup:'Weaker dollar: commodities priced in dollars get cheaper for the rest of the world.',weigh:'Stronger dollar: commodities priced in dollars get more expensive for the rest of the world.',neu:'Steady dollar: little pressure either way.'},
+ real:{sup:'Falling real yields: gold, which pays no interest, looks more attractive.',weigh:'Rising real yields: gold, which pays no interest, looks less attractive.',neu:'Steady real yields: little effect on gold.'},
+ vix:{sup:'Calm markets: investors are willing to take more risk.',weigh:'Nervous markets: investors cut risk, which weighs on energy and industrial metals.',neu:'Moderate nervousness: no clear signal.'},
+ cny:{sup:'Stronger yuan: China, the top metals buyer, pays less for imports.',weigh:'Weaker yuan: China, the top metals buyer, pays more for imports.',neu:'Steady yuan: little effect on Chinese demand.'},
+ eia:{sup:'Stocks fell this week: demand outpaces supply, which supports oil.',weigh:'Stocks rose this week: supply outpaces demand, which weighs on oil.',neu:'Stocks flat this week: no clear signal.'},
+ cot:{sup:'Few funds are long: there is room for new buying.',weigh:'Many funds are already long: few new buyers are left to push prices higher.',neu:'Balanced fund positioning: no clear signal.'}},
+ g:{
+  score:['Signal score','The sum of three simple measures, from -3 to +3: trend (price versus its 20-day average), momentum (RSI) and speed (5-day change). +2 or more is bullish, -2 or less is bearish, in between is neutral. The signal describes what price is doing and predicts nothing.'],
+  ma20:['20-day average','The average price of the last 20 sessions. Above it, the short-term trend is mostly up; below it, mostly down.'],
+  rsi:['RSI','An index from 0 to 100 comparing the strength of recent gains to recent losses. Above 70, price has risen a lot and a pause is possible. Below 30, it has fallen a lot and a rebound is possible.'],
+  vol:['Volatility','How much the price moves, in % per year. The higher it is, the bigger the possible gains and losses.'],
+  bull:['Bullish / bearish','Bullish: the price is expected to rise. Bearish: the price is expected to fall.'],
+  fut:['Futures contract','A contract to buy or sell a set quantity of a commodity at a date and price fixed in advance. The prices shown here are for the nearest contract.'],
+  contango:['Contango','Distant contracts cost more than the nearest one. Often a sign of a well-supplied market.'],
+  back:['Backwardation','Distant contracts cost less than the nearest one. Often a sign of a shortage today.'],
+  cot:['COT (CFTC)','A weekly CFTC report on the positions of funds and producers. It shows whether funds are betting mostly on a rise or a fall.'],
+  dxy:['Dollar index (DXY)','The dollar’s value against a basket of major currencies. A stronger dollar makes commodities more expensive for buyers outside the US.'],
+  real:['Real yield','Interest rate minus expected inflation. When it rises, gold loses appeal because it pays no interest.'],
+  stocks:['Stocks','Quantities held in reserve. Rising stocks mean more supply than demand; falling stocks mean the opposite.']
+ }
+},
+zh:{
+ demo:'演示数据',
+ demoNote:'显示的价格为虚构：真实数据尚未发布。数据采集运行后将自动显示。',upd:'更新于',old:'数据已超过一天：采集可能已停止。',load:'正在加载数据…',stale:'数据过期',
+ mode:'难度',beginner:'新手',trader:'交易员',
+ heroLead:'种大宗商品站上20日均线',
+ heroHelp:'数字越高，短期市场越强势。',
+ up:'看涨',flat:'中性',down:'看跌',
+ all:'全部',energy:'能源',precious:'贵金属',industrial:'工业金属',agri:'农产品',
+ r1m:'1个月',r3m:'3个月',rytd:'年初至今',
+ sUp:'价格上涨并站稳均线之上：买方占优。',
+ sFlat:'方向不明：价格在均线附近徘徊。',
+ sDown:'价格下跌并跌破均线：卖方占优。',
+ hot:'短期涨得很快，可能先歇一歇。',
+ cold:'短期跌得很深，可能出现反弹。',
+ d1:'1日',w1:'1周',m1:'1个月',ytd:'年初至今',rsi:'RSI 14',gap:'偏离均线',vol:'年化波动率',d5:'5日',
+ scoreTitle:'信号如何计算',trend:'趋势',mom:'动能',spd:'速度',total:'得分',
+ watch:'关注点',price:'价格',ma:'20日均线',table:'查看数据（表格）',date:'日期',close:'收盘',avg:'均线',
+ ctx:'大环境',ctxSub:'同时影响所有大宗商品的因素。',
+ sup:'利好价格',weigh:'压制价格',neu:'中性',daily:'每日',weekly:'每周',
+ gloss:'术语表',glossSub:'点击页面中带下划线的词，即可在这里查看。',close_:'关闭',
+ sources:'计划使用的数据源',disc:'仅为一般信息，不构成投资建议。免费数据通常延迟约15分钟。',
+ asof:'演示数据日期：',
+ eiaUnit:'百万桶',cotVal:function(n){return '第'+n+'百分位'},
+ names:{brent:'布伦特原油',wti:'WTI原油',natgas:'天然气',gold:'黄金',silver:'白银',platinum:'铂金',copper:'铜',alu:'铝',wheat:'小麦',corn:'玉米',soy:'大豆',coffee:'咖啡',sugar:'糖',cocoa:'可可'},
+ watchTxt:{brent:'欧佩克+、美国库存、地缘局势',wti:'库欣库存、美国产量',natgas:'天气、美国库存、LNG出口',gold:'实际利率、美元、央行购金',silver:'黄金、工业需求（光伏）',platinum:'汽车行业、南非供应',copper:'中国经济、LME库存',alu:'能源成本、中国产量',wheat:'天气、黑海、USDA报告',corn:'美国天气、乙醇、出口',soy:'中国需求、巴西收成',coffee:'巴西天气、认证库存',sugar:'印度季风、巴西乙醇',cocoa:'科特迪瓦和加纳产量'},
+ ctxN:{dxy:['美元指数（DXY）','dxy'],real:['美国10年期实际利率','real'],vix:['VIX（恐慌指数）',''],cny:['美元/人民币',''],eia:['美国原油库存（EIA）','stocks'],cot:['黄金基金持仓（CFTC）','cot']},
+ ctxT:{
+ dxy:{sup:'美元走弱：以美元计价的大宗商品对其他国家更便宜。',weigh:'美元走强：以美元计价的大宗商品对其他国家更贵。',neu:'美元平稳：两个方向的压力都不大。'},
+ real:{sup:'实际利率下降：不生息的黄金吸引力上升。',weigh:'实际利率上升：不生息的黄金吸引力下降。',neu:'实际利率平稳：对黄金影响不大。'},
+ vix:{sup:'市场平静：投资者风险偏好较高。',weigh:'市场紧张：投资者降低风险，压制能源和工业金属。',neu:'紧张程度适中：没有明确信号。'},
+ cny:{sup:'人民币走强：中国作为金属最大买家，进口成本下降。',weigh:'人民币走弱：中国作为金属最大买家，进口成本上升。',neu:'人民币平稳：对中国需求影响不大。'},
+ eia:{sup:'本周库存下降：需求超过供应，支撑油价。',weigh:'本周库存上升：供应超过需求，压制油价。',neu:'本周库存持平：没有明确信号。'},
+ cot:{sup:'做多的基金很少：还有新增买盘的空间。',weigh:'许多基金已持有多头：可增加的买盘有限。',neu:'基金持仓均衡：没有明确信号。'}},
+ g:{
+  score:['信号得分','三个简单指标之和，范围-3到+3：趋势（价格相对20日均线）、动能（RSI）和速度（5日涨跌幅）。+2及以上为看涨，-2及以下为看跌，其余为中性。信号只描述价格正在做什么，不做预测。'],
+  ma20:['20日均线','最近20个交易日的平均价格。价格在均线之上，短期趋势偏强；在均线之下，偏弱。'],
+  rsi:['RSI','0到100的指数，比较近期涨幅与跌幅的强弱。高于70，说明涨得多，可能先休整；低于30，说明跌得多，可能反弹。'],
+  vol:['波动率','价格波动的幅度，按年化百分比计算。越高，可能的盈亏越大。'],
+  bull:['看涨 / 看跌','看涨：预期价格上升。看跌：预期价格下降。'],
+  fut:['期货合约','约定在未来某个日期、以事先确定的价格买卖一定数量商品的合约。这里显示的是最近月份合约的价格。'],
+  contango:['期货溢价（Contango）','远期合约比近期合约贵。通常说明当前供应充足。'],
+  back:['现货溢价（Backwardation）','远期合约比近期合约便宜。通常说明当前供应紧张。'],
+  cot:['COT 持仓报告（CFTC）','美国商品期货交易委员会每周发布的基金与生产商持仓报告，显示基金更倾向看涨还是看跌。'],
+  dxy:['美元指数（DXY）','美元兑一篮子主要货币的价值。美元走强，会让美国以外的买家觉得大宗商品更贵。'],
+  real:['实际利率','利率减去预期通胀。实际利率上升时，不生息的黄金吸引力下降。'],
+  stocks:['库存','储备的数量。库存增加说明供应多于需求；库存减少则相反。']
+ }
+}};
+var LOC={fr:'fr-FR',en:'en-US',zh:'zh-CN'};
+
+/* ---------- State ---------- */
+var DATA=[],LIVE=null,STATUS='loading';
+var DATA_URL='https://raw.githubusercontent.com/jchonmas-cmyk/commodity-pulse/data/data.json';
+var state={lang:'fr',mode:'beginner',grp:'all',range:'3m',open:{brent:true}};
+try{var sv=JSON.parse(localStorage.getItem('commodity-pulse')||'{}');if(sv.lang&&T[sv.lang])state.lang=sv.lang;if(sv.mode==='beginner'||sv.mode==='trader')state.mode=sv.mode}catch(e){}
+function save(){try{localStorage.setItem('commodity-pulse',JSON.stringify({lang:state.lang,mode:state.mode}))}catch(e){}}
+function tr(){return T[state.lang]}
+function rangeK(c){var k=state.range==='1m'?22:state.range==='3m'?66:c.n-c.y0;return Math.max(10,Math.min(c.n,k))}
+
+/* ---------- Formatting ---------- */
+function nf(n,dec,signed){return new Intl.NumberFormat(LOC[state.lang],{minimumFractionDigits:dec,maximumFractionDigits:dec,signDisplay:signed?'always':'auto'}).format(n)}
+function pct(n){return nf(n,2,true)+(state.lang==='fr'?' %':'%')}
+function sgn(n){return n>0?'+'+n:n<0?'−'+Math.abs(n):'0'}
+function cls(n){return n>0.005?'pos':n<-0.005?'neg':''}
+function fd(d,o){o.timeZone='UTC';return new Intl.DateTimeFormat(LOC[state.lang],o).format(d)}
+function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]})}
+
+/* ---------- Building blocks ---------- */
+function pillCls(cl,text){var ic=cl==='up'?'<path d="M5 1.5 9 8.5H1Z"/>':cl==='down'?'<path d="M5 8.5 1 1.5h8Z"/>':'<circle cx="5" cy="5" r="3.2"/>';return '<span class="pill '+cl+'"><svg viewBox="0 0 10 10" aria-hidden="true">'+ic+'</svg>'+esc(text)+'</span>'}
+function pill(l){return pillCls(l,tr()[l])}
+function termBtn(id,label){return '<button type="button" class="term" data-act="term" data-v="'+id+'">'+esc(label)+'</button>'}
+function spark(vals,w,h){
+ var mn=Math.min.apply(null,vals),mx=Math.max.apply(null,vals),p=5,n=vals.length;
+ function X(i){return p+i*(w-2*p)/(n-1)}
+ function Y(v){return p+(1-(v-mn)/((mx-mn)||1))*(h-2*p)}
+ var d='';vals.forEach(function(v,i){d+=(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)});
+ var lx=X(n-1).toFixed(1),ly=Y(vals[n-1]).toFixed(1);
+ return '<svg class="spark" viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" aria-hidden="true"><path class="sp-area" d="'+d+'L'+lx+' '+(h-p)+'L'+X(0).toFixed(1)+' '+(h-p)+'Z"/><path class="sp-line" d="'+d+'"/><circle class="sp-dot" cx="'+lx+'" cy="'+ly+'" r="4"/></svg>';
+}
+function sentence(a){var t=tr(),s=a.label==='up'?t.sUp:a.label==='down'?t.sDown:t.sFlat,j=state.lang==='zh'?'':' ';if(a.rsi>70)s+=j+t.hot;else if(a.rsi<30)s+=j+t.cold;return s}
+
+function rowHtml(c){
+ var t=tr(),a=c.a,open=!!state.open[c.id],K=rangeK(c);
+ var sub=state.mode==='trader'?c.unit+' · '+c.tk:c.unit;
+ if(c.stale)sub+=' · '+t.stale;
+ var txt=state.mode==='trader'
+  ?'RSI '+Math.round(a.rsi)+' · MA20 '+pct(a.gap)+' · '+t.d5+' '+pct(a.c5)
+  :sentence(a);
+ return '<div class="item"><button type="button" class="row" data-act="row" data-v="'+c.id+'" data-fk="row-'+c.id+'" aria-expanded="'+open+'" aria-controls="d-'+c.id+'">'
+  +'<span class="c1"><span class="nm"><span class="nn">'+esc(t.names[c.id])+'<svg class="chev" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4.5 6 8.5 10 4.5"/></svg></span><span class="unit">'+esc(sub)+'</span></span>'+pill(a.label)+'</span>'
+  +'<span class="c2">'+spark(c.s.slice(-K),76,34)+'</span>'
+  +'<span class="c3"><span class="px">'+nf(a.px,c.dec)+'</span><span class="chg '+cls(a.c1)+'">'+pct(a.c1)+'</span></span>'
+  +'<span class="txt">'+esc(txt)+'</span></button>'
+  +(open?detailHtml(c):'')+'</div>';
+}
+function detailHtml(c){
+ var t=tr(),a=c.a;
+ function st(label,val,cl){return '<div class="st"><span class="sl">'+label+'</span><span class="sv '+(cl||'')+'">'+val+'</span></div>'}
+ var h='<div class="detail" id="d-'+c.id+'"><div class="stats">'
+  +st(esc(t.d1),pct(a.c1),cls(a.c1))+st(esc(t.w1),pct(a.c5),cls(a.c5))+st(esc(t.m1),pct(a.c21),cls(a.c21))+st(esc(t.ytd),pct(a.ytd),cls(a.ytd));
+ if(state.mode==='trader'){
+  h+=st(termBtn('rsi',t.rsi),Math.round(a.rsi))+st(termBtn('ma20',t.gap),pct(a.gap),cls(a.gap))+st(termBtn('vol',t.vol),nf(a.vol,0)+(state.lang==='fr'?' %':'%'));
+ }
+ h+='</div>';
+ if(state.mode==='trader'){
+  h+='<div class="bd"><span>'+termBtn('score',t.scoreTitle)+'</span><span>'+esc(t.trend)+' '+sgn(a.trend)+'</span><span>'+esc(t.mom)+' '+sgn(a.mom)+'</span><span>'+esc(t.spd)+' '+sgn(a.spd)+'</span><b>'+esc(t.total)+' '+sgn(a.score)+'</b></div>';
+ }
+ h+='<p class="watch"><b>'+esc(t.watch)+'</b> · '+esc(t.watchTxt[c.id])+'</p>';
+ h+='<div class="chart" data-id="'+c.id+'"></div>';
+ h+='<div class="lg"><span><i class="key" style="background:var(--s1)"></i>'+esc(t.price)+'</span><span><i class="key" style="background:var(--s2)"></i>'+termBtn('ma20',t.ma)+'</span></div>';
+ var rows='';for(var k=0;k<8&&k<c.n;k++){var i=c.n-1-k;rows+='<tr><td>'+fd(c.dates[i],{day:'numeric',month:'short'})+'</td><td>'+nf(c.s[i],c.dec)+'</td><td>'+nf(sma(c.s,20,i),c.dec)+'</td></tr>'}
+ h+='<details class="tb"><summary>'+esc(t.table)+'</summary><div class="tbw"><table><thead><tr><th>'+esc(t.date)+'</th><th>'+esc(t.close)+'</th><th>'+esc(t.avg)+'</th></tr></thead><tbody>'+rows+'</tbody></table></div></details>';
+ return h+'</div>';
+}
+function ctxHtml(x){
+ var t=tr(),nm=t.ctxN[x.id],d=x.d,imp=impact(x.id,d),v,chg='';
+ if(x.kind==='eia')v=nf(d.chg,1,true)+' '+t.eiaUnit;
+ else if(x.kind==='cot')v=t.cotVal(Math.round(d.v));
+ else v=nf(d.v,x.dec)+(x.id==='real'?(state.lang==='fr'?'\u202f%':'%'):'');
+ if(x.kind==='pct'&&d.chg!=null)chg='<small class="'+cls(d.chg)+'">'+pct(d.chg)+'</small>';
+ if(x.kind==='pt'&&d.chg!=null)chg='<small class="'+cls(d.chg)+'">'+nf(d.chg,2,true)+' pt</small>';
+ var ic=imp==='sup'?'up':imp==='weigh'?'down':'flat';
+ var name=nm[1]?termBtn(nm[1],nm[0]):esc(nm[0]);
+ return '<div class="ctxi"><div class="ch"><span class="cn">'+name+'</span><span class="cv">'+esc(v)+chg+'</span></div>'
+  +'<div class="cm">'+pillCls(ic,t[imp])+'<span class="tag">'+esc(t[x.freq])+(state.mode==='trader'?' · '+esc(x.src):'')+'</span></div>'
+  +'<p>'+esc(t.ctxT[x.id][imp])+'</p></div>';
+}
+function subLine(){
+ var t=tr();
+ if(STATUS==='live'&&LIVE)return t.upd+' '+new Intl.DateTimeFormat(LOC[state.lang],{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(LIVE.updated));
+ if(STATUS==='loading')return t.load;
+ return t.asof+' '+fd(END,{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+}
+function noteHtml(){
+ var t=tr();
+ if(STATUS==='demo')return '<div class="note"><b>'+esc(t.demo)+'.</b> '+esc(t.demoNote)+'</div>';
+ if(STATUS==='live'&&LIVE&&Date.now()-new Date(LIVE.updated).getTime()>36*3600e3)return '<div class="note">'+esc(t.old)+'</div>';
+ return '';
+}
+
+/* ---------- Render ---------- */
+function render(){
+ var t=tr();
+ var ae=document.activeElement,fk=ae&&ae.dataset?ae.dataset.fk:null;
+ document.documentElement.lang=state.lang==='zh'?'zh-Hans':state.lang;
+ var cUp=0,cFl=0,cDn=0,above=0;
+ DATA.forEach(function(c){var l=c.a.label;if(l==='up')cUp++;else if(l==='down')cDn++;else cFl++;if(c.a.px>c.a.ma)above++});
+ function bar(n,col){return n?'<i style="flex:'+n+';background:'+col+'"></i>':''}
+ function leg(n,col,l){return '<span><i class="sw" style="background:'+col+'"></i>'+esc(t[l])+' '+n+'</span>'}
+ var h='';
+ h+='<div class="top"><div><h1>Commodity Pulse</h1><p class="sub">'+esc(subLine())+'</p></div>'
+  +'<div class="ctrls"><div class="seg" role="group" aria-label="Language">'
+  +['fr','en','zh'].map(function(l){return '<button type="button" data-act="lang" data-v="'+l+'" data-fk="lang-'+l+'" aria-pressed="'+(state.lang===l)+'">'+(l==='zh'?'中文':l.toUpperCase())+'</button>'}).join('')
+  +'</div><div class="seg" role="group" aria-label="'+esc(t.mode)+'">'
+  +['beginner','trader'].map(function(m){return '<button type="button" data-act="mode" data-v="'+m+'" data-fk="mode-'+m+'" aria-pressed="'+(state.mode===m)+'">'+esc(t[m])+'</button>'}).join('')
+  +'</div></div></div>';
+ if(STATUS==='loading'){document.getElementById('app').innerHTML=h;document.getElementById('sh-x').textContent=t.close_;return}
+ h+=noteHtml();
+ h+='<section class="hero" aria-label="Market summary"><div class="big">'+above+' <small>/ '+DATA.length+'</small></div>'
+  +'<p class="lead">'+esc(t.heroLead)+'</p><p class="help">'+esc(t.heroHelp)+'</p>'
+  +'<div class="segbar" role="img" aria-label="'+esc(t.up+' '+cUp+', '+t.flat+' '+cFl+', '+t.down+' '+cDn)+'">'+bar(cUp,'var(--up)')+bar(cFl,'var(--flat)')+bar(cDn,'var(--down)')+'</div>'
+  +'<div class="legend">'+leg(cUp,'var(--up)','up')+leg(cFl,'var(--flat)','flat')+leg(cDn,'var(--down)','down')+'</div></section>';
+ h+='<div class="filters"><div class="fg" role="group" aria-label="Filter">'
+  +['all'].concat(GROUPS).map(function(g){return '<button type="button" class="chip" data-act="grp" data-v="'+g+'" data-fk="g-'+g+'" aria-pressed="'+(state.grp===g)+'">'+esc(t[g])+'</button>'}).join('')
+  +'</div><div class="fg" role="group" aria-label="Range">'
+  +['1m','3m','ytd'].map(function(r){return '<button type="button" class="chip" data-act="range" data-v="'+r+'" data-fk="r-'+r+'" aria-pressed="'+(state.range===r)+'">'+esc(t['r'+r])+'</button>'}).join('')
+  +'</div></div>';
+ GROUPS.forEach(function(g){
+  if(state.grp!=='all'&&state.grp!==g)return;
+  var items=DATA.filter(function(c){return c.grp===g});
+  h+='<section class="grp"><h2>'+esc(t[g])+'<span>'+items.length+'</span></h2><div class="list">'+items.map(rowHtml).join('')+'</div></section>';
+ });
+ h+='<section class="sec"><h2>'+esc(t.ctx)+'</h2><p class="sub">'+esc(t.ctxSub)+'</p><div class="list">'+ctxItems().map(ctxHtml).join('')+'</div></section>';
+ h+='<section class="sec"><h2>'+esc(t.gloss)+'</h2><p class="sub">'+esc(t.glossSub)+'</p><div class="list">'
+  +GL.map(function(id){return '<details class="g"><summary>'+esc(t.g[id][0])+'</summary><p>'+esc(t.g[id][1])+'</p></details>'}).join('')+'</div></section>';
+ h+='<footer class="foot"><p><b>'+esc(t.sources)+'</b> · Yahoo Finance · FRED · EIA · CFTC · USDA</p><p>'+esc(t.disc)+'</p></footer>';
+ document.getElementById('app').innerHTML=h;
+ document.getElementById('sh-x').textContent=t.close_;
+ drawCharts();
+ if(fk){var el=document.querySelector('[data-fk="'+fk+'"]');if(el)el.focus({preventScroll:true})}
+}
+
+/* ---------- Detail chart ---------- */
+function niceTicks(lo,hi,n){var raw=(hi-lo)/n,p=Math.pow(10,Math.floor(Math.log10(raw))),f=raw/p,step=(f<1.5?1:f<3?2:f<7?5:10)*p,out=[];for(var v=Math.ceil(lo/step)*step;v<=hi+1e-9;v+=step)out.push(+v.toFixed(10));return{ticks:out,step:step}}
+function drawCharts(){document.querySelectorAll('.chart[data-id]').forEach(drawChart)}
+function drawChart(el){
+ var t=tr(),c=DATA.filter(function(x){return x.id===el.dataset.id})[0],W=el.clientWidth;
+ if(!c||W<120)return;
+ var K=rangeK(c),n0=Math.max(19,c.n-K),idx=[],i;K=c.n-n0;for(i=n0;i<c.n;i++)idx.push(i);
+ var px=idx.map(function(i){return c.s[i]}),ma=idx.map(function(i){return sma(c.s,20,i)});
+ var H=200,m={l:48,r:10,t:10,b:24},all=px.concat(ma);
+ var lo=Math.min.apply(null,all),hi=Math.max.apply(null,all),pad=(hi-lo)*.08||1;lo-=pad;hi+=pad;
+ var nt=niceTicks(lo,hi,4),tdec=nt.step>=1?0:Math.min(3,Math.ceil(-Math.log10(nt.step)));
+ function X(k){return m.l+k/(K-1)*(W-m.l-m.r)}
+ function Y(v){return m.t+(1-(v-lo)/(hi-lo))*(H-m.t-m.b)}
+ function path(a){return a.map(function(v,k){return(k?'L':'M')+X(k).toFixed(1)+' '+Y(v).toFixed(1)}).join('')}
+ var s='<svg viewBox="0 0 '+W+' '+H+'" width="'+W+'" height="'+H+'" tabindex="0" role="img" aria-label="'+esc(t.names[c.id]+' — '+t.price+', '+t.ma)+'">';
+ nt.ticks.forEach(function(v){s+='<line class="gl" x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+Y(v).toFixed(1)+'" y2="'+Y(v).toFixed(1)+'"/><text class="tk" x="'+(m.l-6)+'" y="'+(Y(v)+4).toFixed(1)+'" text-anchor="end">'+nf(v,tdec)+'</text>'});
+ s+='<line class="ax" x1="'+m.l+'" x2="'+(W-m.r)+'" y1="'+(H-m.b)+'" y2="'+(H-m.b)+'"/>';
+ [[0,'start'],[Math.round((K-1)/2),'middle'],[K-1,'end']].forEach(function(p){s+='<text class="tk" x="'+X(p[0]).toFixed(1)+'" y="'+(H-6)+'" text-anchor="'+p[1]+'">'+fd(c.dates[idx[p[0]]],{day:'numeric',month:'short'})+'</text>'});
+ s+='<path d="'+path(px)+'L'+X(K-1).toFixed(1)+' '+(H-m.b)+'L'+X(0).toFixed(1)+' '+(H-m.b)+'Z" fill="var(--s1)" opacity=".1"/>';
+ s+='<path class="ln" stroke="var(--s2)" d="'+path(ma)+'"/><path class="ln" stroke="var(--s1)" d="'+path(px)+'"/>';
+ s+='<circle cx="'+X(K-1).toFixed(1)+'" cy="'+Y(px[K-1]).toFixed(1)+'" r="4" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/>';
+ s+='<g class="hov" visibility="hidden"><line class="ax" y1="'+m.t+'" y2="'+(H-m.b)+'"/><circle class="h2" r="4" fill="var(--s2)" stroke="var(--surface)" stroke-width="2"/><circle class="h1" r="4" fill="var(--s1)" stroke="var(--surface)" stroke-width="2"/></g></svg><div class="tip" hidden></div>';
+ el.innerHTML=s;
+ var svg=el.querySelector('svg'),tip=el.querySelector('.tip'),hov=svg.querySelector('.hov'),cur=K-1;
+ function show(k){
+  k=Math.max(0,Math.min(K-1,k));cur=k;var x=X(k);
+  var ln=hov.querySelector('line');ln.setAttribute('x1',x);ln.setAttribute('x2',x);
+  var h1=hov.querySelector('.h1'),h2=hov.querySelector('.h2');
+  h1.setAttribute('cx',x);h1.setAttribute('cy',Y(px[k]));h2.setAttribute('cx',x);h2.setAttribute('cy',Y(ma[k]));
+  hov.setAttribute('visibility','visible');
+  tip.hidden=false;
+  tip.innerHTML='<div class="d">'+esc(fd(c.dates[idx[k]],{day:'numeric',month:'short',year:'numeric'}))+'</div>'
+   +'<div class="r"><i class="key" style="background:var(--s1)"></i><b>'+nf(px[k],c.dec)+'</b><span class="n">'+esc(t.price)+'</span></div>'
+   +'<div class="r"><i class="key" style="background:var(--s2)"></i><b>'+nf(ma[k],c.dec)+'</b><span class="n">'+esc(t.ma)+'</span></div>';
+  var tw=tip.offsetWidth,left=x+12;if(left+tw>W-2)left=x-12-tw;tip.style.left=Math.max(2,left)+'px';
+ }
+ function hide(){hov.setAttribute('visibility','hidden');tip.hidden=true}
+ function at(e){var r=svg.getBoundingClientRect(),x=(e.clientX-r.left)*(W/r.width);show(Math.round((x-m.l)/(W-m.l-m.r)*(K-1)))}
+ svg.addEventListener('pointermove',at);
+ svg.addEventListener('pointerdown',at);
+ svg.addEventListener('pointerleave',function(e){if(e.pointerType==='mouse')hide()});
+ svg.addEventListener('focus',function(){show(cur)});
+ svg.addEventListener('blur',hide);
+ svg.addEventListener('keydown',function(e){
+  if(e.key==='ArrowLeft'){show(cur-1);e.preventDefault()}
+  else if(e.key==='ArrowRight'){show(cur+1);e.preventDefault()}
+  else if(e.key==='Home'){show(0);e.preventDefault()}
+  else if(e.key==='End'){show(K-1);e.preventDefault()}
+  else if(e.key==='Escape'){hide()}
+ });
+}
+
+/* ---------- Glossary sheet and events ---------- */
+var lastFocus=null;
+function openTerm(id){var g=tr().g[id];if(!g)return;lastFocus=document.activeElement;document.getElementById('sh-t').textContent=g[0];document.getElementById('sh-d').textContent=g[1];document.getElementById('sheet').hidden=false;document.getElementById('sh-x').focus()}
+function closeTerm(){document.getElementById('sheet').hidden=true;if(lastFocus&&lastFocus.focus)lastFocus.focus({preventScroll:true})}
+document.addEventListener('click',function(e){
+ if(e.target.id==='sheet'){closeTerm();return}
+ var b=e.target.closest('[data-act]');if(!b)return;
+ var a=b.dataset.act,v=b.dataset.v;
+ if(a==='term'){openTerm(v);return}
+ if(a==='close'){closeTerm();return}
+ if(a==='lang'){state.lang=v;save()}
+ else if(a==='mode'){state.mode=v;save()}
+ else if(a==='grp'){state.grp=v}
+ else if(a==='range'){state.range=v}
+ else if(a==='row'){if(state.open[v])delete state.open[v];else state.open[v]=true}
+ if(!document.getElementById('sheet').hidden)document.getElementById('sheet').hidden=true;
+ render();
+});
+document.addEventListener('keydown',function(e){if(e.key==='Escape'&&!document.getElementById('sheet').hidden)closeTerm()});
+var rz;window.addEventListener('resize',function(){clearTimeout(rz);rz=setTimeout(drawCharts,120)});
+function toItem(c,s){
+ var o=Object.assign({},c);
+ o.s=s.c;o.dates=s.d.map(function(x){return new Date(x+'T00:00:00Z')});o.n=s.c.length;
+ var ly=o.dates[o.n-1].getUTCFullYear(),first=0;
+ while(first<o.n&&o.dates[first].getUTCFullYear()<ly)first++;
+ o.y0=Math.max(0,first-1);o.stale=!!s.stale;o.a=analyze(o.s,o.y0);
+ return o;
+}
+function fetchLive(){
+ return fetch(DATA_URL+'?t='+Date.now(),{cache:'no-store'}).then(function(r){if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}).then(function(j){
+  if(STATUS==='live'&&LIVE&&LIVE.updated===j.updated)return false;
+  var items=[];
+  COMMS.forEach(function(c){var s=j.items&&j.items[c.id];if(s&&s.c&&s.d&&s.c.length>=30&&s.c.length===s.d.length)items.push(toItem(c,s))});
+  if(!items.length)throw new Error('empty');
+  DATA=items;LIVE=j;STATUS='live';return true;
+ });
+}
+function refresh(first){
+ return fetchLive().catch(function(){if(first){DATA=demoData();STATUS='demo';return true}return false}).then(function(changed){if(changed)render()});
+}
+render();
+refresh(true);
+setInterval(function(){if(!document.hidden)refresh(false)},300000);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)refresh(false)});
+})();
+</script>
+</body>
+</html>
