@@ -5,6 +5,11 @@ on:
     # Every 15 minutes, Monday to Friday (UTC). GitHub may delay a run by a few minutes.
     - cron: "*/15 * * * 1-5"
   workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Send a test notification to the phone (true/false)"
+        required: false
+        default: "false"
 
 permissions:
   contents: write
@@ -16,33 +21,39 @@ concurrency:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - name: Collect data
+        env:
+          NTFY_TOPIC: ${{ vars.NTFY_TOPIC }}
+          TEST_ALERT: ${{ github.event.inputs.test_alert }}
         run: |
           cat > update_data.py <<'PYEOF'
           #!/usr/bin/env python3
           """Commodity Pulse data collector.
 
           Collects public market data and writes data.json (standard library only).
-          Sources: Yahoo Finance (prices, Stooq as backup), FRED (US real yield and
-          US crude stocks), CFTC (fund positioning in gold).
+          Sources: Yahoo Finance (prices, Stooq as backup), US Treasury and FRED (real
+          yield, US crude stocks), CFTC (fund positioning in gold).
 
           If a source fails, the last good values are kept and flagged "stale".
           The script exits with an error only if nothing at all could be refreshed.
+          It also sends free phone alerts through ntfy.sh when NTFY_TOPIC is set.
           """
           import csv
           import io
           import json
+          import math
           import os
           import sys
           import time
           import urllib.parse
           import urllib.request
-          from datetime import datetime, timezone
+          from datetime import datetime, timedelta, timezone
 
           REPO = os.environ.get("GITHUB_REPOSITORY", "jchonmas-cmyk/commodity-pulse")
           PREV_URL = "https://raw.githubusercontent.com/%s/data/data.json" % REPO
+          SITE_URL = "https://%s.github.io/%s/" % tuple(REPO.split("/"))
           OUT = os.environ.get("OUT_FILE", "data.json")
           UA = {"User-Agent": "Mozilla/5.0 (compatible; commodity-pulse/1.0)"}
           KEEP = 260            # sessions kept per commodity (about one year)
@@ -67,21 +78,30 @@ jobs:
           }
           CONTEXT_YAHOO = {"dxy": "DX-Y.NYB", "vix": "^VIX", "cny": "CNY=X"}
 
+          NAMES_FR = {"brent": "Brent", "wti": "WTI", "natgas": "Gaz naturel", "gold": "Or",
+                      "silver": "Argent", "platinum": "Platine", "copper": "Cuivre",
+                      "alu": "Aluminium", "wheat": "Blé", "corn": "Maïs", "soy": "Soja",
+                      "coffee": "Café", "sugar": "Sucre", "cocoa": "Cacao"}
+          LABEL_FR = {"up": "Haussier", "flat": "Neutre", "down": "Baissier"}
+          BIG_MOVE = {"natgas": 7.0, "cocoa": 7.0, "coffee": 5.0, "sugar": 5.0}   # default 4.0 %
+
 
           def log(msg):
               print(msg, flush=True)
 
 
-          def http_get(url, timeout=25, tries=3):
+          def http_get(url, timeout=15, tries=2, headers=None, data=None):
               last = None
               for k in range(tries):
                   try:
-                      req = urllib.request.Request(url, headers=UA)
+                      h = dict(UA)
+                      h.update(headers or {})
+                      req = urllib.request.Request(url, headers=h, data=data)
                       with urllib.request.urlopen(req, timeout=timeout) as r:
                           return r.read()
                   except Exception as e:  # network, HTTP error, timeout
                       last = e
-                      time.sleep(1.5 * (k + 1))
+                      time.sleep(1.0 * (k + 1))
               raise last
 
 
@@ -137,9 +157,10 @@ jobs:
 
 
           # --------------------------------------------------------------- context
-          def fred_series(series_id):
-              url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s" % series_id
-              text = http_get(url).decode("utf-8", "replace")
+          def fred_series(series_id, days=150):
+              since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+              url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s&cosd=%s" % (series_id, since)
+              text = http_get(url, timeout=20, tries=2).decode("utf-8", "replace")
               rows = list(csv.reader(io.StringIO(text)))[1:]
               out = []
               for r in rows:
@@ -154,20 +175,73 @@ jobs:
               return out
 
 
+          def treasury_real_yield():
+              """10-year real yield from the US Treasury (daily, no key)."""
+              year = datetime.now(timezone.utc).year
+              rows = []
+              for y in (year, year - 1):
+                  url = ("https://home.treasury.gov/resource-center/data-chart-center/interest-rates/"
+                         "daily-treasury-rates.csv/%d/all?type=daily_treasury_real_yield_curve"
+                         "&field_tdr_date_value=%d&page&_format=csv" % (y, y))
+                  text = http_get(url, timeout=20, tries=2).decode("utf-8-sig", "replace")
+                  for r in csv.DictReader(io.StringIO(text)):
+                      key = next((k for k in r if k and "10" in k), None)
+                      if not key or not r.get("Date") or not r[key]:
+                          continue
+                      try:
+                          d = datetime.strptime(r["Date"], "%m/%d/%Y").strftime("%Y-%m-%d")
+                          rows.append((d, float(r[key])))
+                      except ValueError:
+                          continue
+                  if len(rows) >= 2:
+                      break
+              rows.sort()
+              if len(rows) < 2:
+                  raise ValueError("Treasury returned too few values")
+              return rows
+
+
           def ctx_yahoo(symbol):
               d, c = yahoo_series(symbol)
               return {"v": round(c[-1], 4), "chg": round((c[-1] / c[-2] - 1) * 100, 2), "d": d[-1]}
 
 
           def ctx_real_yield():
-              s = fred_series("DFII10")
-              return {"v": round(s[-1][1], 2), "chg": round(s[-1][1] - s[-2][1], 2), "d": s[-1][0]}
+              errors = []
+              for fn in (treasury_real_yield, lambda: fred_series("DFII10")):
+                  try:
+                      s = fn()
+                      return {"v": round(s[-1][1], 2), "chg": round(s[-1][1] - s[-2][1], 2), "d": s[-1][0]}
+                  except Exception as e:
+                      errors.append(str(e))
+              raise RuntimeError("; ".join(errors))
+
+
+          def eia_api_stocks(key):
+              url = ("https://api.eia.gov/v2/petroleum/stoc/wstk/data/?api_key=%s&frequency=weekly"
+                     "&data[0]=value&facets[series][]=WCESTUS1&sort[0][column]=period"
+                     "&sort[0][direction]=desc&length=2" % urllib.parse.quote(key))
+              rows = json.loads(http_get(url, timeout=20, tries=2))["response"]["data"]
+              if len(rows) < 2:
+                  raise ValueError("EIA returned too few values")
+              return [(rows[1]["period"], float(rows[1]["value"])), (rows[0]["period"], float(rows[0]["value"]))]
 
 
           def ctx_crude_stocks():
-              s = fred_series("WCESTUS1")   # thousand barrels, weekly
-              return {"v": round(s[-1][1] / 1000, 1),
-                      "chg": round((s[-1][1] - s[-2][1]) / 1000, 1), "d": s[-1][0]}
+              """US crude stocks in thousand barrels, weekly."""
+              errors, series = [], None
+              key = os.environ.get("EIA_API_KEY", "").strip()
+              sources = ([lambda: eia_api_stocks(key)] if key else []) + [lambda: fred_series("WCESTUS1", 90)]
+              for fn in sources:
+                  try:
+                      series = fn()
+                      break
+                  except Exception as e:
+                      errors.append(str(e))
+              if not series:
+                  raise RuntimeError("; ".join(errors))
+              return {"v": round(series[-1][1] / 1000, 1),
+                      "chg": round((series[-1][1] - series[-2][1]) / 1000, 1), "d": series[-1][0]}
 
 
           def ctx_cot_gold():
@@ -187,6 +261,98 @@ jobs:
               return {"v": round(pct), "chg": None, "d": rows[0]["report_date_as_yyyy_mm_dd"][:10], "net": nets[0]}
 
 
+          # --------------------------------------------------------------- signals
+          def compute_signal(c):
+              """Same three measures as the page: trend, momentum (RSI) and speed."""
+              if len(c) < 30:
+                  return None
+              px = c[-1]
+              ma = sum(c[-20:]) / 20
+              gap = (px / ma - 1) * 100
+              g = l = 0.0
+              for i in range(1, 15):
+                  d = c[i] - c[i - 1]
+                  if d >= 0:
+                      g += d
+                  else:
+                      l -= d
+              g /= 14
+              l /= 14
+              for i in range(15, len(c)):
+                  d = c[i] - c[i - 1]
+                  g = (g * 13 + max(d, 0)) / 14
+                  l = (l * 13 + max(-d, 0)) / 14
+              rsi = 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+              rets = [math.log(c[i] / c[i - 1]) for i in range(len(c) - 20, len(c))]
+              m = sum(rets) / len(rets)
+              sd = math.sqrt(sum((r - m) ** 2 for r in rets) / (len(rets) - 1))
+              c5 = (px / c[-6] - 1) * 100
+              z = c5 / 100 / (sd * math.sqrt(5)) if sd else 0
+              trend = 1 if gap > 0.5 else -1 if gap < -0.5 else 0
+              mom = 1 if rsi > 55 else -1 if rsi < 45 else 0
+              spd = 1 if z > 1 else -1 if z < -1 else 0
+              score = trend + mom + spd
+              label = "up" if score >= 2 else "down" if score <= -2 else "flat"
+              return {"score": score, "label": label, "rsi": round(rsi, 1), "gap": round(gap, 2)}
+
+
+          # ---------------------------------------------------------------- alerts
+          def ntfy_send(topic, title, message, tags):
+              body = json.dumps({"topic": topic, "title": title, "message": message,
+                                 "tags": tags, "click": SITE_URL}).encode("utf-8")
+              http_get("https://ntfy.sh/", timeout=15, tries=2,
+                       headers={"Content-Type": "application/json"}, data=body)
+
+
+          def fmt(x):
+              return ("%.2f" % x).replace(".", ",")
+
+
+          def run_alerts(items, signals, prev, today):
+              """At most one signal alert and one big-move alert per commodity per day."""
+              topic = os.environ.get("NTFY_TOPIC", "").strip()
+              old_state = prev.get("alerts", {})
+              state = {"signal": dict(old_state.get("signal", {})), "move": dict(old_state.get("move", {}))}
+              if not topic:
+                  log("alerts: NTFY_TOPIC not set, skipped")
+                  return state
+              if os.environ.get("TEST_ALERT", "").lower() == "true":
+                  try:
+                      ntfy_send(topic, "Commodity Pulse", "Test réussi : les alertes fonctionnent.", ["white_check_mark"])
+                      log("alerts: test message sent")
+                  except Exception as e:
+                      log("alerts: test failed: %s" % e)
+              prev_sig = prev.get("signals", {})
+              for cid, it in items.items():
+                  sig = signals.get(cid)
+                  if not sig or it.get("stale") or len(it["c"]) < 2:
+                      continue
+                  name = NAMES_FR.get(cid, cid)
+                  px = it["c"][-1]
+                  chg1 = (px / it["c"][-2] - 1) * 100
+                  old = prev_sig.get(cid, {}).get("label")
+                  if old and old != sig["label"] and state["signal"].get(cid) != today:
+                      tag = "chart_with_upwards_trend" if sig["label"] == "up" else \
+                            "chart_with_downwards_trend" if sig["label"] == "down" else "left_right_arrow"
+                      try:
+                          ntfy_send(topic, "%s : %s" % (name, LABEL_FR[sig["label"]]),
+                                    "%s passe de %s à %s. Prix %s (%s %% sur 1 jour)."
+                                    % (name, LABEL_FR.get(old, old), LABEL_FR[sig["label"]], fmt(px), fmt(chg1)), [tag])
+                          state["signal"][cid] = today
+                          log("alerts: signal alert sent for %s" % cid)
+                      except Exception as e:
+                          log("alerts: failed for %s: %s" % (cid, e))
+                  if abs(chg1) >= BIG_MOVE.get(cid, 4.0) and state["move"].get(cid) != today:
+                      try:
+                          ntfy_send(topic, "%s : forte variation" % name,
+                                    "%s bouge de %s %% sur 1 jour (prix %s)." % (name, fmt(chg1), fmt(px)), ["warning"])
+                          state["move"][cid] = today
+                          log("alerts: move alert sent for %s" % cid)
+                      except Exception as e:
+                          log("alerts: failed for %s: %s" % (cid, e))
+              return state
+
+
           # ------------------------------------------------------------------ main
           def load_previous():
               path = os.environ.get("PREV_FILE")
@@ -198,15 +364,17 @@ jobs:
 
 
           def main():
+              t0 = time.time()
               prev = load_previous()
               prev_items, prev_ctx = prev.get("items", {}), prev.get("ctx", {})
               items, ctx, fresh, problems = {}, {}, 0, []
-              today = datetime.now(timezone.utc).date()
+              now = datetime.now(timezone.utc)
+              today = now.strftime("%Y-%m-%d")
 
               for cid, (ysym, ssym) in COMMODITIES.items():
                   try:
                       it = fetch_commodity(cid, ysym, ssym)
-                      age = (today - datetime.strptime(it["d"][-1], "%Y-%m-%d").date()).days
+                      age = (now.date() - datetime.strptime(it["d"][-1], "%Y-%m-%d").date()).days
                       it["stale"] = age > MAX_AGE_DAYS
                       items[cid] = it
                       fresh += 1
@@ -238,16 +406,29 @@ jobs:
                   log("Nothing could be refreshed. data.json left untouched.")
                   return 1
 
+              signals = {}
+              for cid, it in items.items():
+                  s = compute_signal(it["c"])
+                  if s:
+                      signals[cid] = s
+              try:
+                  alerts = run_alerts(items, signals, prev, today)
+              except Exception as e:
+                  log("alerts: unexpected error: %s" % e)
+                  alerts = prev.get("alerts", {"signal": {}, "move": {}})
+
               out = {
-                  "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "updated": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "items": items,
                   "ctx": ctx,
+                  "signals": signals,
+                  "alerts": alerts,
                   "problems": problems,
               }
               with open(OUT, "w", encoding="utf-8") as f:
                   json.dump(out, f, separators=(",", ":"))
-              log("Wrote %s: %d commodities, %d context values, %d problems"
-                  % (OUT, len(items), len(ctx), len(problems)))
+              log("Wrote %s: %d commodities, %d context values, %d problems, %.0fs"
+                  % (OUT, len(items), len(ctx), len(problems), time.time() - t0))
               return 0
 
 
