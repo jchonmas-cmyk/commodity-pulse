@@ -165,6 +165,19 @@ details.g summary{cursor:pointer;font-weight:600;min-height:44px;display:flex;al
 details.g p{font-size:14px;color:var(--ink2);padding-bottom:12px}
 .ibtn{margin-top:10px;min-height:44px;padding:0 18px;border:1px solid var(--border);border-radius:12px;background:var(--surface);color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
 .ibtn:focus-visible{outline:2px solid var(--s1);outline-offset:2px}
+.btg{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btc{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:3px;min-width:0}
+.btv{font-size:26px;font-weight:650;font-variant-numeric:tabular-nums;line-height:1.15;margin-top:6px}
+.btm{font-size:12px;color:var(--ink2)}
+.btb{margin-top:10px;font-size:13px;color:var(--ink2)}
+.btb b{color:var(--ink)}
+.cave{margin-top:10px;font-size:12px;color:var(--ink2)}
+details.ev summary{flex-direction:column;align-items:flex-start;justify-content:center;gap:0;padding:8px 0}
+.evw{font-size:12px;font-weight:400;color:var(--ink2)}
+details.g p.evm{font-size:12px;padding-top:0}
+.evw b{color:var(--ink);font-weight:600}
+details.ev.maj{box-shadow:inset 3px 0 0 var(--s1)}
+details.g p.evm b{color:var(--ink)}
 .foot{margin-top:26px;font-size:12px;color:var(--ink2)}
 .foot p+p{margin-top:6px}
 
@@ -231,6 +244,65 @@ function analyze(a,y0){
  return{px:px,ma:ma,c1:ch(1),c5:c5,c21:ch(21),ytd:(px/a[y0]-1)*100,rsi:r,vol:sd*Math.sqrt(252)*100,gap:gap,trend:trend,mom:mom,spd:spd,score:score,label:score>=2?'up':score<=-2?'down':'flat'};
 }
 function demoData(){return COMMS.map(function(c){var s=series(c);var o=Object.assign({},c);o.s=s;o.dates=DATES;o.n=N;o.y0=YTD0;o.a=analyze(s,YTD0);return o})}
+
+/* ---------- Backtest: replay the signal on past data ---------- */
+var BT_H=5,BT_START=30;
+function backtest(items){
+ var per={},pool={up:{n:0,s:0,h:0},flat:{n:0,s:0,h:0},down:{n:0,s:0,h:0},all:{n:0,s:0}};
+ items.forEach(function(c){
+  var a=c.s,r={up:{n:0,s:0,h:0},flat:{n:0,s:0,h:0},down:{n:0,s:0,h:0},all:{n:0,s:0}};
+  for(var i=BT_START;i+BT_H<a.length;i++){
+   var lab=analyze(a.slice(0,i+1),0).label,f=(a[i+BT_H]/a[i]-1)*100;
+   var hit=lab==='up'?f>0:lab==='down'?f<0:false;
+   [r[lab],pool[lab]].forEach(function(b){b.n++;b.s+=f;if(hit)b.h++});
+   [r.all,pool.all].forEach(function(b){b.n++;b.s+=f});
+  }
+  per[c.id]=r;
+ });
+ return{per:per,pool:pool};
+}
+function btVerdict(pool){
+ var u=pool.up,d=pool.down;
+ if(u.n<100||d.n<100)return 0;
+ var spread=u.s/u.n-d.s/d.n,hu=u.h/u.n*100,hd=d.h/d.n*100;
+ if(spread>=0.4&&hu>=52&&hd>=52)return 1;
+ if(spread<=-0.4)return 3;
+ return 2;
+}
+
+/* ---------- Calendar: recurring releases and official dates (US Eastern time) ---------- */
+var HOL={};['2026-11-11','2026-11-26','2026-12-25','2027-01-01','2027-01-18','2027-02-15','2027-05-31','2027-06-18','2027-07-05','2027-09-06','2027-10-11','2027-11-11','2027-11-25','2027-12-24'].forEach(function(d){HOL[d]=1});
+var FIXED={
+ fomc:{h:14,m:0,d:['2026-12-09','2027-01-27','2027-03-17','2027-04-28','2027-06-09','2027-07-28','2027-09-15','2027-11-17']},
+ cpi:{h:8,m:30,d:['2026-12-10','2027-01-13','2027-02-11','2027-03-10','2027-04-13','2027-05-12','2027-06-10','2027-07-14']},
+ jobs:{h:8,m:30,d:['2026-12-04','2027-01-08','2027-02-05','2027-03-05','2027-04-02','2027-05-07','2027-06-04','2027-07-02','2027-08-06','2027-09-03','2027-10-08','2027-11-05','2027-12-03']},
+ wasde:{h:12,m:0,d:['2026-12-10','2027-01-12','2027-02-10','2027-03-10','2027-04-09','2027-05-12','2027-06-11','2027-07-09','2027-08-12','2027-09-10','2027-10-08','2027-11-10','2027-12-10']}
+};
+function ymd(d){return d.toISOString().slice(0,10)}
+function addD(d,n){var x=new Date(d.getTime());x.setUTCDate(x.getUTCDate()+n);return x}
+var ETF=null;
+function etWall(ts){
+ if(!ETF)ETF=new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hourCycle:'h23',year:'numeric',month:'numeric',day:'numeric',hour:'numeric',minute:'numeric'});
+ var o={};ETF.formatToParts(new Date(ts)).forEach(function(x){o[x.type]=x.value});
+ return Date.UTC(+o.year,+o.month-1,+o.day,+o.hour%24,+o.minute);
+}
+function etDate(ds,h,mi){
+ var p=ds.split('-'),g=Date.UTC(+p[0],+p[1]-1,+p[2],h,mi);
+ var t=g-(etWall(g)-g);t=g-(etWall(t)-t);
+ return new Date(t);
+}
+function calEvents(now){
+ var out=[],t0=new Date(Date.UTC(now.getUTCFullYear(),now.getUTCMonth(),now.getUTCDate())),i,d,w,e;
+ for(i=-1;i<60;i++){
+  d=addD(t0,i);w=d.getUTCDay();
+  if(w===3){e=d;if(HOL[ymd(addD(d,-2))])e=addD(e,1);while(HOL[ymd(e)])e=addD(e,1);out.push({k:'petrol',u:1,ts:etDate(ymd(e),10,30)})}
+  if(w===4){out.push(HOL[ymd(d)]?{k:'gas',u:1,ts:etDate(ymd(addD(d,-1)),12,0)}:{k:'gas',u:1,ts:etDate(ymd(d),10,30)})}
+  if(w===5){e=d;while(HOL[ymd(e)])e=addD(e,3);out.push({k:'cot',u:1,ts:etDate(ymd(e),15,30)})}
+ }
+ Object.keys(FIXED).forEach(function(k){FIXED[k].d.forEach(function(ds){out.push({k:k,u:0,ts:etDate(ds,FIXED[k].h,FIXED[k].m)})})});
+ var lo=now.getTime(),hi=lo+14*864e5;
+ return out.filter(function(x){return x.ts.getTime()>lo&&x.ts.getTime()<hi}).sort(function(a,b){return a.ts-b.ts});
+}
 //#PURE-END
 
 /* ---------- Context definitions ---------- */
@@ -287,6 +359,8 @@ fr:{
  names:{brent:'Brent',wti:'WTI',natgas:'Gaz naturel',gold:'Or',silver:'Argent',platinum:'Platine',copper:'Cuivre',alu:'Aluminium',wheat:'Blé',corn:'Maïs',soy:'Soja',coffee:'Café',sugar:'Sucre',cocoa:'Cacao'},
  watchTxt:{brent:'OPEP+, stocks US, géopolitique',wti:'Stocks de Cushing, production US',natgas:'Météo, stockage US, exportations de GNL',gold:'Taux réels, dollar, achats des banques centrales',silver:'Or, demande industrielle (solaire)',platinum:'Industrie automobile, offre sud-africaine',copper:'Économie chinoise, stocks du LME',alu:'Coût de l’énergie, production chinoise',wheat:'Météo, mer Noire, rapport USDA',corn:'Météo US, éthanol, exportations',soy:'Demande chinoise, récolte brésilienne',coffee:'Météo au Brésil, stocks certifiés',sugar:'Mousson indienne, éthanol brésilien',cocoa:'Récoltes de Côte d’Ivoire et du Ghana'},
  ctxN:{dxy:['Dollar américain (DXY)','dxy'],real:['Taux réel US à 10 ans','real'],vix:['VIX (indice de la peur)',''],cny:['Dollar / yuan',''],eia:['Stocks de pétrole US (EIA)','stocks'],cot:['Fonds spéculatifs sur l’or (CFTC)','cot']},
+ cal:{"title": "Calendrier", "sub": "Les rendez-vous qui font souvent bouger les prix. Heures affichées dans votre fuseau horaire.", "today": "Aujourd’hui", "tomorrow": "Demain", "official": "Date officielle", "usual": "Date habituelle", "why": "Pourquoi c’est important", "who": "Matières concernées", "src": "Source", "note": "Les dates « habituelles » peuvent se décaler autour des jours fériés américains. Vérifiez sur le site officiel avant de vous organiser.", "empty": "Aucun rendez-vous prévu dans les prochaines semaines.", "ev": {"petrol": ["Stocks de pétrole américains (EIA)", "Chaque semaine, les États-Unis comptent le pétrole stocké. Plus de stocks que prévu : pression sur les prix. Moins de stocks que prévu : soutien.", "Brent, WTI", "EIA – Weekly Petroleum Status Report"], "gas": ["Stocks de gaz américains (EIA)", "Montre combien de gaz reste en réserve. Un stock bas en hiver pousse souvent les prix vers le haut.", "Gaz naturel", "EIA – Natural Gas Storage Report"], "cot": ["Positions des fonds (COT)", "Montre si les grands fonds parient sur la hausse ou la baisse. Quand presque tous parient pareil, le marché peut se retourner.", "Or et la plupart des matières", "CFTC – Commitments of Traders"], "fomc": ["Décision de la Réserve fédérale (Fed)", "La banque centrale américaine fixe ses taux. Des taux plus élevés renforcent souvent le dollar et pèsent sur l’or ; des taux plus bas aident souvent l’or.", "Or, argent, platine, dollar", "Federal Reserve – calendrier FOMC"], "cpi": ["Inflation américaine (CPI)", "Mesure la hausse des prix aux États-Unis. Elle influence les décisions de la Fed, donc le dollar et l’or.", "Or, argent, dollar", "BLS – Consumer Price Index"], "jobs": ["Emploi américain (« NFP »)", "Le grand rapport mensuel sur l’emploi aux États-Unis. Il peut faire bouger le dollar et les taux, donc l’or, parfois le pétrole.", "Or, argent, pétrole", "BLS – Employment Situation"], "wasde": ["Rapport agricole USDA (WASDE)", "Chaque mois, le ministère américain de l’Agriculture met à jour ses estimations de récoltes et de stocks. Un chiffre inattendu fait souvent bouger fortement les prix.", "Blé, maïs, soja", "USDA – WASDE"]}},
+ bt:{"title": "Le signal est-il fiable ?", "sub": "Nous avons rejoué le signal sur l’historique disponible (environ un an) : que s’est-il passé dans les 5 séances suivantes ?", "avg": "variation moyenne sur 5 séances", "hitUp": "Hausse dans {p} % des cas", "hitDn": "Baisse dans {p} % des cas", "n": "{n} jours testés", "base": "Toutes séances confondues :", "detail": "Détail par matière", "col": "Matière", "cave": "À savoir : un an d’historique seulement ; les règles ont été choisies en regardant ces mêmes données ; les frais ne sont pas comptés ; les jours voisins se ressemblent, donc les cas ne sont pas indépendants. Le passé ne garantit pas l’avenir.", "v0": ["Pas assez de cas pour conclure.", "L’historique est encore trop court pour un verdict honnête."], "v1": ["Jusqu’ici, le signal a plutôt indiqué le bon sens.", "Après « Haussier », les prix ont davantage monté qu’après « Baissier ». C’est encourageant, mais ce n’est pas une preuve."], "v2": ["Pas d’avantage net démontré.", "Les résultats après « Haussier » et après « Baissier » sont proches : le signal décrit la tendance du moment, il ne prédit pas la suite."], "v3": ["Jusqu’ici, le signal a plutôt indiqué le mauvais sens.", "Après « Baissier », les prix ont plutôt rebondi. Sur de courtes périodes, suivre la tendance n’a pas payé ici : prudence."]},
  ctxT:{
  dxy:{sup:'Dollar en baisse : les matières premières, cotées en dollars, coûtent moins cher au reste du monde.',weigh:'Dollar en hausse : les matières premières, cotées en dollars, coûtent plus cher au reste du monde.',neu:'Dollar stable : peu de pression dans un sens ou dans l’autre.'},
  real:{sup:'Taux réels en baisse : l’or, qui ne rapporte aucun intérêt, devient plus attractif.',weigh:'Taux réels en hausse : l’or, qui ne rapporte aucun intérêt, devient moins attractif.',neu:'Taux réels stables : peu d’effet sur l’or.'},
@@ -335,6 +409,8 @@ en:{
  names:{brent:'Brent',wti:'WTI',natgas:'Natural gas',gold:'Gold',silver:'Silver',platinum:'Platinum',copper:'Copper',alu:'Aluminum',wheat:'Wheat',corn:'Corn',soy:'Soybeans',coffee:'Coffee',sugar:'Sugar',cocoa:'Cocoa'},
  watchTxt:{brent:'OPEC+, US stocks, geopolitics',wti:'Cushing stocks, US output',natgas:'Weather, US storage, LNG exports',gold:'Real yields, dollar, central bank buying',silver:'Gold, industrial demand (solar)',platinum:'Auto industry, South African supply',copper:'China’s economy, LME stocks',alu:'Energy costs, China output',wheat:'Weather, Black Sea, USDA report',corn:'US weather, ethanol, exports',soy:'China demand, Brazil crop',coffee:'Brazil weather, certified stocks',sugar:'Indian monsoon, Brazil ethanol',cocoa:'Ivory Coast and Ghana crops'},
  ctxN:{dxy:['US dollar (DXY)','dxy'],real:['US 10-year real yield','real'],vix:['VIX (fear gauge)',''],cny:['USD / CNY',''],eia:['US crude stocks (EIA)','stocks'],cot:['Fund positioning in gold (CFTC)','cot']},
+ cal:{"title": "Calendar", "sub": "Scheduled events that often move prices. Times are shown in your time zone.", "today": "Today", "tomorrow": "Tomorrow", "official": "Official date", "usual": "Usual schedule", "why": "Why it matters", "who": "Markets affected", "src": "Source", "note": "“Usual schedule” dates can shift around US holidays. Check the official site before planning around them.", "empty": "No scheduled events in the coming weeks.", "ev": {"petrol": ["US crude oil stocks (EIA)", "Every week the US counts the oil it holds in storage. More stock than expected tends to weigh on prices; less tends to support them.", "Brent, WTI", "EIA – Weekly Petroleum Status Report"], "gas": ["US natural gas storage (EIA)", "Shows how much gas is left in storage. Low stocks in winter often push prices up.", "Natural gas", "EIA – Natural Gas Storage Report"], "cot": ["Fund positions (COT)", "Shows whether big funds are betting on rises or falls. When nearly everyone bets the same way, the market can reverse.", "Gold and most commodities", "CFTC – Commitments of Traders"], "fomc": ["Federal Reserve rate decision", "The US central bank sets interest rates. Higher rates often lift the dollar and weigh on gold; lower rates often help gold.", "Gold, silver, platinum, dollar", "Federal Reserve – FOMC calendar"], "cpi": ["US inflation (CPI)", "Measures how fast prices are rising in the US. It shapes the Fed’s decisions, so it moves the dollar and gold.", "Gold, silver, dollar", "BLS – Consumer Price Index"], "jobs": ["US jobs report (“NFP”)", "The big monthly report on US employment. It can move the dollar and interest rates, so gold, and sometimes oil.", "Gold, silver, oil", "BLS – Employment Situation"], "wasde": ["USDA crop report (WASDE)", "Each month the US Department of Agriculture updates its crop and stock estimates. A surprise often moves prices sharply.", "Wheat, corn, soybeans", "USDA – WASDE"]}},
+ bt:{"title": "Does the signal work?", "sub": "We replayed the signal on the available history (about one year): what happened over the next 5 sessions?", "avg": "average move over 5 sessions", "hitUp": "Rose in {p}% of cases", "hitDn": "Fell in {p}% of cases", "n": "{n} days tested", "base": "All sessions combined:", "detail": "Detail by commodity", "col": "Commodity", "cave": "Keep in mind: only about a year of history; the rules were chosen while looking at this same data; trading costs are not included; neighbouring days look alike, so cases are not independent. The past does not guarantee the future.", "v0": ["Not enough cases to conclude.", "There is too little history for an honest verdict yet."], "v1": ["So far, the signal has pointed the right way.", "After “Bullish”, prices rose more than after “Bearish”. Encouraging, but not proof."], "v2": ["No clear edge shown.", "Results after “Bullish” and after “Bearish” are close: the signal describes the current trend, it does not predict what comes next."], "v3": ["So far, the signal has pointed the wrong way.", "After “Bearish”, prices tended to bounce. Following the trend over short periods did not pay here: be careful."]},
  ctxT:{
  dxy:{sup:'Weaker dollar: commodities priced in dollars get cheaper for the rest of the world.',weigh:'Stronger dollar: commodities priced in dollars get more expensive for the rest of the world.',neu:'Steady dollar: little pressure either way.'},
  real:{sup:'Falling real yields: gold, which pays no interest, looks more attractive.',weigh:'Rising real yields: gold, which pays no interest, looks less attractive.',neu:'Steady real yields: little effect on gold.'},
@@ -383,6 +459,8 @@ zh:{
  names:{brent:'布伦特原油',wti:'WTI原油',natgas:'天然气',gold:'黄金',silver:'白银',platinum:'铂金',copper:'铜',alu:'铝',wheat:'小麦',corn:'玉米',soy:'大豆',coffee:'咖啡',sugar:'糖',cocoa:'可可'},
  watchTxt:{brent:'欧佩克+、美国库存、地缘局势',wti:'库欣库存、美国产量',natgas:'天气、美国库存、LNG出口',gold:'实际利率、美元、央行购金',silver:'黄金、工业需求（光伏）',platinum:'汽车行业、南非供应',copper:'中国经济、LME库存',alu:'能源成本、中国产量',wheat:'天气、黑海、USDA报告',corn:'美国天气、乙醇、出口',soy:'中国需求、巴西收成',coffee:'巴西天气、认证库存',sugar:'印度季风、巴西乙醇',cocoa:'科特迪瓦和加纳产量'},
  ctxN:{dxy:['美元指数（DXY）','dxy'],real:['美国10年期实际利率','real'],vix:['VIX（恐慌指数）',''],cny:['美元/人民币',''],eia:['美国原油库存（EIA）','stocks'],cot:['黄金基金持仓（CFTC）','cot']},
+ cal:{"title": "日历", "sub": "经常引发价格波动的定期事件。时间按您所在时区显示。", "today": "今天", "tomorrow": "明天", "official": "官方日期", "usual": "通常日程", "why": "为什么重要", "who": "相关品种", "src": "来源", "note": "“通常日程”可能因美国节假日而顺延。请以官方网站为准。", "empty": "未来几周没有已安排的事件。", "ev": {"petrol": ["美国原油库存（EIA）", "美国每周统计储存的原油量。库存高于预期通常压制油价，低于预期通常支撑油价。", "布伦特、WTI", "EIA – 每周石油状况报告"], "gas": ["美国天然气库存（EIA）", "显示还有多少天然气在储存。冬季库存偏低往往推高价格。", "天然气", "EIA – 天然气库存报告"], "cot": ["基金持仓（COT）", "显示大型基金是在押涨还是押跌。当几乎所有人押同一方向时，市场可能反转。", "黄金及多数商品", "CFTC – 交易商持仓报告"], "fomc": ["美联储利率决议", "美国央行决定利率。加息往往推升美元、压制黄金；降息常有利于黄金。", "黄金、白银、铂金、美元", "美联储 – FOMC 日程"], "cpi": ["美国通胀（CPI）", "衡量美国物价上涨速度。它影响美联储决策，因此会带动美元和黄金。", "黄金、白银、美元", "BLS – 消费者价格指数"], "jobs": ["美国非农就业报告", "美国每月最重要的就业数据。它会影响美元和利率，从而影响黄金，有时也影响原油。", "黄金、白银、原油", "BLS – 就业形势报告"], "wasde": ["美国农业部作物报告（WASDE）", "美国农业部每月更新作物和库存预估。意外数据常引发价格剧烈波动。", "小麦、玉米、大豆", "USDA – WASDE"]}},
+ bt:{"title": "这个信号可靠吗？", "sub": "我们在现有历史数据（约一年）上回放了信号：之后5个交易日发生了什么？", "avg": "5个交易日平均涨跌幅", "hitUp": "上涨占比 {p}%", "hitDn": "下跌占比 {p}%", "n": "测试天数 {n}", "base": "所有交易日合计：", "detail": "按品种查看明细", "col": "品种", "cave": "请注意：历史仅约一年；规则是在观察这些数据时确定的；未计入交易成本；相邻交易日走势相似，样本并不独立。过去不代表未来。", "v0": ["样本不足，暂时无法判断。", "历史数据太少，还不能给出公平的结论。"], "v1": ["到目前为止，信号方向大体正确。", "“看涨”之后价格的涨幅高于“看跌”之后。令人鼓舞，但不是证明。"], "v2": ["没有显示出明确优势。", "“看涨”和“看跌”之后的结果接近：该信号描述的是当前趋势，并不能预测之后走势。"], "v3": ["到目前为止，信号方向大体相反。", "“看跌”之后价格往往反弹。短期内顺势操作在此并未奏效，请谨慎。"]},
  ctxT:{
  dxy:{sup:'美元走弱：以美元计价的大宗商品对其他国家更便宜。',weigh:'美元走强：以美元计价的大宗商品对其他国家更贵。',neu:'美元平稳：两个方向的压力都不大。'},
  real:{sup:'实际利率下降：不生息的黄金吸引力上升。',weigh:'实际利率上升：不生息的黄金吸引力下降。',neu:'实际利率平稳：对黄金影响不大。'},
@@ -410,6 +488,7 @@ var LOC={fr:'fr-FR',en:'en-US',zh:'zh-CN'};
 /* ---------- State ---------- */
 var DATA=[],LIVE=null,STATUS='loading';
 var DATA_URL='https://raw.githubusercontent.com/jchonmas-cmyk/commodity-pulse/data/data.json';
+var BT=null;
 var state={lang:'fr',mode:'beginner',grp:'all',range:'3m',open:{brent:true}};
 try{var sv=JSON.parse(localStorage.getItem('commodity-pulse')||'{}');if(sv.lang&&T[sv.lang])state.lang=sv.lang;if(sv.mode==='beginner'||sv.mode==='trader')state.mode=sv.mode}catch(e){}
 function save(){try{localStorage.setItem('commodity-pulse',JSON.stringify({lang:state.lang,mode:state.mode}))}catch(e){}}
@@ -497,6 +576,39 @@ function noteHtml(){
  return '';
 }
 
+/* ---------- Backtest and calendar sections ---------- */
+function btHtml(){
+ if(STATUS!=='live'||!BT)return '';
+ var t=tr(),b=t.bt,P=BT.pool,v=b['v'+btVerdict(P)];
+ function card(lab,key){
+  var x=P[key],a=x.n?x.s/x.n:null,hit=x.n?Math.round(x.h/x.n*100):null;
+  return '<div class="btc">'+pill(lab)+'<div class="btv '+(a==null?'':cls(a))+'">'+(a==null?'–':pct(a))+'</div><div class="sl">'+esc(b.avg)+'</div>'
+   +'<div class="btm">'+esc(hit==null?'':b[key==='up'?'hitUp':'hitDn'].replace('{p}',hit))+'</div><div class="btm">'+esc(b.n.replace('{n}',nf(x.n,0)))+'</div></div>';
+ }
+ function cell(x){return x.n>=5?nf(x.n,0)+' · '+pct(x.s/x.n):'–'}
+ var rows=DATA.map(function(c){var r=BT.per[c.id];return r?'<tr><td>'+esc(t.names[c.id])+'</td><td>'+cell(r.up)+'</td><td>'+cell(r.down)+'</td></tr>':''}).join('');
+ return '<section class="sec"><h2>'+esc(b.title)+'</h2><p class="sub">'+esc(b.sub)+'</p>'
+  +'<div class="btg">'+card('up','up')+card('down','down')+'</div>'
+  +(P.all.n?'<p class="btb">'+esc(b.base)+' <b>'+pct(P.all.s/P.all.n)+'</b></p>':'')
+  +'<div class="note"><b>'+esc(v[0])+'</b> '+esc(v[1])+'</div>'
+  +'<details class="tb"'+(state.mode==='trader'?' open':'')+'><summary>'+esc(b.detail)+'</summary><div class="tbw"><table><thead><tr><th>'+esc(b.col)+'</th><th>'+esc(t.up)+'</th><th>'+esc(t.down)+'</th></tr></thead><tbody>'+rows+'</tbody></table></div></details>'
+  +'<p class="cave">'+esc(b.cave)+'</p></section>';
+}
+function calHtml(){
+ var t=tr(),c=t.cal,now=new Date(),ev=calEvents(now),L=LOC[state.lang];
+ var dfm=new Intl.DateTimeFormat(L,{weekday:'short',day:'numeric',month:'short'}),tfm=new Intl.DateTimeFormat(L,{hour:'2-digit',minute:'2-digit'});
+ function dayLabel(ts){
+  var a=new Date(now.getFullYear(),now.getMonth(),now.getDate()),d=new Date(ts.getFullYear(),ts.getMonth(),ts.getDate()),n=Math.round((d-a)/864e5);
+  return n===0?c.today:n===1?c.tomorrow:dfm.format(ts);
+ }
+ var body=ev.length?'<div class="list">'+ev.map(function(e){
+  var x=c.ev[e.k];
+  return '<details class="g ev'+(e.u?'':' maj')+'"><summary><span class="evw">'+esc(dayLabel(e.ts)+' · '+tfm.format(e.ts))+(e.u?'':' · <b>'+esc(c.official)+'</b>')+'</span><span class="evt">'+esc(x[0])+'</span></summary>'
+   +'<p>'+esc(x[1])+'</p><p class="evm"><b>'+esc(c.who)+' :</b> '+esc(x[2])+'<br><b>'+esc(c.src)+' :</b> '+esc(x[3])+' · '+esc(e.u?c.usual:c.official)+'</p></details>';
+ }).join('')+'</div><p class="cave">'+esc(c.note)+'</p>':'<p class="sub">'+esc(c.empty)+'</p>';
+ return '<section class="sec"><h2>'+esc(c.title)+'</h2><p class="sub">'+esc(c.sub)+'</p>'+body+'</section>';
+}
+
 /* ---------- Render ---------- */
 function render(){
  var t=tr();
@@ -530,6 +642,8 @@ function render(){
   h+='<section class="grp"><h2>'+esc(t[g])+'<span>'+items.length+'</span></h2><div class="list">'+items.map(rowHtml).join('')+'</div></section>';
  });
  h+='<section class="sec"><h2>'+esc(t.ctx)+'</h2><p class="sub">'+esc(t.ctxSub)+'</p><div class="list">'+ctxItems().map(ctxHtml).join('')+'</div></section>';
+ h+=btHtml();
+ h+=calHtml();
  h+='<section class="sec"><h2>'+esc(t.gloss)+'</h2><p class="sub">'+esc(t.glossSub)+'</p><div class="list">'
   +GL.map(function(id){return '<details class="g"><summary>'+esc(t.g[id][0])+'</summary><p>'+esc(t.g[id][1])+'</p></details>'}).join('')+'</div></section>';
  h+='<section class="sec inst" id="inst" hidden><h2>'+esc(t.inst)+'</h2><p class="sub" id="inst-ios" hidden>'+esc(t.instIos)+'</p><button type="button" class="ibtn" id="inst-btn" hidden data-act="install">'+esc(t.instBtn)+'</button></section>';
@@ -642,6 +756,7 @@ function fetchLive(){
   var items=[];
   COMMS.forEach(function(c){var s=j.items&&j.items[c.id];if(s&&s.c&&s.d&&s.c.length>=30&&s.c.length===s.d.length)items.push(toItem(c,s))});
   if(!items.length)throw new Error('empty');
+  try{BT=backtest(items)}catch(e){BT=null}
   DATA=items;LIVE=j;STATUS='live';return true;
  });
 }
