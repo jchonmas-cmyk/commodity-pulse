@@ -227,9 +227,28 @@ jobs:
               return [(rows[1]["period"], float(rows[1]["value"])), (rows[0]["period"], float(rows[0]["value"]))]
 
 
+          def eia_wpsr_stocks():
+              """US commercial crude stocks (million barrels) from the EIA weekly report table, no key."""
+              text = http_get("https://ir.eia.gov/wpsr/table1.csv", timeout=20, tries=2).decode("utf-8-sig", "replace")
+              rows = list(csv.reader(io.StringIO(text)))
+              head = rows[0]
+              for r in rows[1:]:
+                  if len(r) >= 3 and r[0].strip().startswith("Commercial (Excluding SPR)"):
+                      now_v = float(r[1].replace(",", ""))
+                      prev_v = float(r[2].replace(",", ""))
+                      d = datetime.strptime(head[1].strip(), "%m/%d/%y").strftime("%Y-%m-%d")
+                      return {"v": round(now_v, 1), "chg": round(now_v - prev_v, 1), "d": d}
+              raise ValueError("EIA table has no commercial crude row")
+
+
           def ctx_crude_stocks():
-              """US crude stocks in thousand barrels, weekly."""
-              errors, series = [], None
+              """US crude stocks in million barrels, weekly."""
+              errors = []
+              try:
+                  return eia_wpsr_stocks()
+              except Exception as e:
+                  errors.append("eia csv: %s" % e)
+              series = None
               key = os.environ.get("EIA_API_KEY", "").strip()
               sources = ([lambda: eia_api_stocks(key)] if key else []) + [lambda: fred_series("WCESTUS1", 90)]
               for fn in sources:
