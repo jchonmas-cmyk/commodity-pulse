@@ -1,0 +1,269 @@
+name: Update market data
+
+on:
+  schedule:
+    # Every 15 minutes, Monday to Friday (UTC). GitHub may delay a run by a few minutes.
+    - cron: "*/15 * * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Collect data
+        run: |
+          cat > update_data.py <<'PYEOF'
+          #!/usr/bin/env python3
+          """Commodity Pulse data collector.
+
+          Collects public market data and writes data.json (standard library only).
+          Sources: Yahoo Finance (prices, Stooq as backup), FRED (US real yield and
+          US crude stocks), CFTC (fund positioning in gold).
+
+          If a source fails, the last good values are kept and flagged "stale".
+          The script exits with an error only if nothing at all could be refreshed.
+          """
+          import csv
+          import io
+          import json
+          import os
+          import sys
+          import time
+          import urllib.parse
+          import urllib.request
+          from datetime import datetime, timezone
+
+          REPO = os.environ.get("GITHUB_REPOSITORY", "jchonmas-cmyk/commodity-pulse")
+          PREV_URL = "https://raw.githubusercontent.com/%s/data/data.json" % REPO
+          OUT = os.environ.get("OUT_FILE", "data.json")
+          UA = {"User-Agent": "Mozilla/5.0 (compatible; commodity-pulse/1.0)"}
+          KEEP = 260            # sessions kept per commodity (about one year)
+          MAX_AGE_DAYS = 6      # a last price older than this is flagged stale
+
+          # id: (Yahoo symbol, Stooq symbol or None)
+          COMMODITIES = {
+              "brent": ("BZ=F", "cb.f"),
+              "wti": ("CL=F", "cl.f"),
+              "natgas": ("NG=F", "ng.f"),
+              "gold": ("GC=F", "gc.f"),
+              "silver": ("SI=F", "si.f"),
+              "platinum": ("PL=F", "pl.f"),
+              "copper": ("HG=F", "hg.f"),
+              "alu": ("ALI=F", None),
+              "wheat": ("ZW=F", "zw.f"),
+              "corn": ("ZC=F", "zc.f"),
+              "soy": ("ZS=F", "zs.f"),
+              "coffee": ("KC=F", "kc.f"),
+              "sugar": ("SB=F", "sb.f"),
+              "cocoa": ("CC=F", "cc.f"),
+          }
+          CONTEXT_YAHOO = {"dxy": "DX-Y.NYB", "vix": "^VIX", "cny": "CNY=X"}
+
+
+          def log(msg):
+              print(msg, flush=True)
+
+
+          def http_get(url, timeout=25, tries=3):
+              last = None
+              for k in range(tries):
+                  try:
+                      req = urllib.request.Request(url, headers=UA)
+                      with urllib.request.urlopen(req, timeout=timeout) as r:
+                          return r.read()
+                  except Exception as e:  # network, HTTP error, timeout
+                      last = e
+                      time.sleep(1.5 * (k + 1))
+              raise last
+
+
+          # ---------------------------------------------------------------- prices
+          def yahoo_series(symbol):
+              url = ("https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1y&interval=1d"
+                     % urllib.parse.quote(symbol))
+              res = json.loads(http_get(url))["chart"]["result"][0]
+              offset = res.get("meta", {}).get("gmtoffset", 0) or 0
+              closes = res["indicators"]["quote"][0]["close"]
+              dates, vals = [], []
+              for ts, c in zip(res["timestamp"], closes):
+                  if c is None or c <= 0:
+                      continue
+                  day = datetime.fromtimestamp(ts + offset, tz=timezone.utc).strftime("%Y-%m-%d")
+                  if dates and dates[-1] == day:      # keep the latest bar of a day
+                      vals[-1] = round(c, 4)
+                  else:
+                      dates.append(day)
+                      vals.append(round(c, 4))
+              return dates[-KEEP:], vals[-KEEP:]
+
+
+          def stooq_series(symbol):
+              url = "https://stooq.com/q/d/l/?s=%s&i=d" % urllib.parse.quote(symbol)
+              text = http_get(url).decode("utf-8", "replace")
+              rows = list(csv.DictReader(io.StringIO(text)))
+              dates, vals = [], []
+              for r in rows:
+                  try:
+                      dates.append(r["Date"])
+                      vals.append(round(float(r["Close"]), 4))
+                  except (KeyError, ValueError):
+                      continue
+              if not dates:
+                  raise ValueError("stooq returned no rows")
+              return dates[-KEEP:], vals[-KEEP:]
+
+
+          def fetch_commodity(cid, yahoo_sym, stooq_sym):
+              errors = []
+              for name, fn, sym in (("yahoo", yahoo_series, yahoo_sym), ("stooq", stooq_series, stooq_sym)):
+                  if not sym:
+                      continue
+                  try:
+                      d, c = fn(sym)
+                      if len(d) >= 30:
+                          return {"d": d, "c": c, "src": name, "stale": False}
+                      errors.append("%s: only %d rows" % (name, len(d)))
+                  except Exception as e:
+                      errors.append("%s: %s" % (name, e))
+              raise RuntimeError("; ".join(errors))
+
+
+          # --------------------------------------------------------------- context
+          def fred_series(series_id):
+              url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=%s" % series_id
+              text = http_get(url).decode("utf-8", "replace")
+              rows = list(csv.reader(io.StringIO(text)))[1:]
+              out = []
+              for r in rows:
+                  if len(r) < 2 or r[1] in ("", "."):
+                      continue
+                  try:
+                      out.append((r[0], float(r[1])))
+                  except ValueError:
+                      continue
+              if len(out) < 2:
+                  raise ValueError("FRED %s returned too few values" % series_id)
+              return out
+
+
+          def ctx_yahoo(symbol):
+              d, c = yahoo_series(symbol)
+              return {"v": round(c[-1], 4), "chg": round((c[-1] / c[-2] - 1) * 100, 2), "d": d[-1]}
+
+
+          def ctx_real_yield():
+              s = fred_series("DFII10")
+              return {"v": round(s[-1][1], 2), "chg": round(s[-1][1] - s[-2][1], 2), "d": s[-1][0]}
+
+
+          def ctx_crude_stocks():
+              s = fred_series("WCESTUS1")   # thousand barrels, weekly
+              return {"v": round(s[-1][1] / 1000, 1),
+                      "chg": round((s[-1][1] - s[-2][1]) / 1000, 1), "d": s[-1][0]}
+
+
+          def ctx_cot_gold():
+              where = "market_and_exchange_names like 'GOLD - COMMODITY EXCHANGE INC.%'"
+              q = urllib.parse.urlencode({
+                  "$where": where,
+                  "$order": "report_date_as_yyyy_mm_dd DESC",
+                  "$limit": "156",
+                  "$select": "report_date_as_yyyy_mm_dd,noncomm_positions_long_all,noncomm_positions_short_all",
+              }, quote_via=urllib.parse.quote)
+              rows = json.loads(http_get("https://publicreporting.cftc.gov/resource/6dca-aqww.json?" + q))
+              nets = [int(float(r["noncomm_positions_long_all"])) - int(float(r["noncomm_positions_short_all"]))
+                      for r in rows]
+              if len(nets) < 20:
+                  raise ValueError("CFTC returned too few weeks")
+              pct = 100.0 * sum(1 for n in nets if n <= nets[0]) / len(nets)
+              return {"v": round(pct), "chg": None, "d": rows[0]["report_date_as_yyyy_mm_dd"][:10], "net": nets[0]}
+
+
+          # ------------------------------------------------------------------ main
+          def load_previous():
+              path = os.environ.get("PREV_FILE")
+              try:
+                  raw = open(path, "rb").read() if path else http_get(PREV_URL, tries=1)
+                  return json.loads(raw)
+              except Exception:
+                  return {}
+
+
+          def main():
+              prev = load_previous()
+              prev_items, prev_ctx = prev.get("items", {}), prev.get("ctx", {})
+              items, ctx, fresh, problems = {}, {}, 0, []
+              today = datetime.now(timezone.utc).date()
+
+              for cid, (ysym, ssym) in COMMODITIES.items():
+                  try:
+                      it = fetch_commodity(cid, ysym, ssym)
+                      age = (today - datetime.strptime(it["d"][-1], "%Y-%m-%d").date()).days
+                      it["stale"] = age > MAX_AGE_DAYS
+                      items[cid] = it
+                      fresh += 1
+                      log("ok    %-9s %s  last %s = %s" % (cid, it["src"], it["d"][-1], it["c"][-1]))
+                  except Exception as e:
+                      problems.append("%s: %s" % (cid, e))
+                      log("FAIL  %-9s %s" % (cid, e))
+                      if cid in prev_items:
+                          old = dict(prev_items[cid])
+                          old["stale"] = True
+                          items[cid] = old
+                  time.sleep(0.2)
+
+              jobs = [(k, (lambda s=s: ctx_yahoo(s))) for k, s in CONTEXT_YAHOO.items()]
+              jobs += [("real", ctx_real_yield), ("eia", ctx_crude_stocks), ("cot", ctx_cot_gold)]
+              for key, fn in jobs:
+                  try:
+                      ctx[key] = fn()
+                      fresh += 1
+                      log("ok    ctx:%-5s %s" % (key, ctx[key]))
+                  except Exception as e:
+                      problems.append("ctx %s: %s" % (key, e))
+                      log("FAIL  ctx:%-5s %s" % (key, e))
+                      if key in prev_ctx:
+                          ctx[key] = prev_ctx[key]
+                  time.sleep(0.2)
+
+              if fresh == 0:
+                  log("Nothing could be refreshed. data.json left untouched.")
+                  return 1
+
+              out = {
+                  "updated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                  "items": items,
+                  "ctx": ctx,
+                  "problems": problems,
+              }
+              with open(OUT, "w", encoding="utf-8") as f:
+                  json.dump(out, f, separators=(",", ":"))
+              log("Wrote %s: %d commodities, %d context values, %d problems"
+                  % (OUT, len(items), len(ctx), len(problems)))
+              return 0
+
+
+          if __name__ == "__main__":
+              sys.exit(main())
+          PYEOF
+          python3 update_data.py
+
+      - name: Publish data.json on the data branch
+        run: |
+          mkdir out
+          cp data.json out/data.json
+          cd out
+          git init -q -b data
+          git config user.name "commodity-pulse-bot"
+          git config user.email "bot@users.noreply.github.com"
+          git add data.json
+          git commit -q -m "Update market data"
+          git push -q -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" data
