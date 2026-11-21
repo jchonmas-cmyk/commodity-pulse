@@ -56,7 +56,9 @@ jobs:
           SITE_URL = "https://%s.github.io/%s/" % tuple(REPO.split("/"))
           OUT = os.environ.get("OUT_FILE", "data.json")
           UA = {"User-Agent": "Mozilla/5.0 (compatible; commodity-pulse/1.0)"}
-          KEEP = 260            # sessions kept per commodity (about one year)
+          KEEP = 260            # sessions kept per commodity in data.json (about one year)
+          HIST = 1300           # sessions used for the signal test (about five years)
+          BT_H = 5              # forward horizon of the signal test, in sessions
           MAX_AGE_DAYS = 6      # a last price older than this is flagged stale
 
           # id: (Yahoo symbol, Stooq symbol or None)
@@ -106,9 +108,9 @@ jobs:
 
 
           # ---------------------------------------------------------------- prices
-          def yahoo_series(symbol):
-              url = ("https://query1.finance.yahoo.com/v8/finance/chart/%s?range=1y&interval=1d"
-                     % urllib.parse.quote(symbol))
+          def yahoo_series(symbol, rng="1y"):
+              url = ("https://query1.finance.yahoo.com/v8/finance/chart/%s?range=%s&interval=1d"
+                     % (urllib.parse.quote(symbol), rng))
               res = json.loads(http_get(url))["chart"]["result"][0]
               offset = res.get("meta", {}).get("gmtoffset", 0) or 0
               closes = res["indicators"]["quote"][0]["close"]
@@ -122,7 +124,7 @@ jobs:
                   else:
                       dates.append(day)
                       vals.append(round(c, 4))
-              return dates[-KEEP:], vals[-KEEP:]
+              return dates[-HIST:], vals[-HIST:]
 
 
           def stooq_series(symbol):
@@ -138,12 +140,12 @@ jobs:
                       continue
               if not dates:
                   raise ValueError("stooq returned no rows")
-              return dates[-KEEP:], vals[-KEEP:]
+              return dates[-HIST:], vals[-HIST:]
 
 
           def fetch_commodity(cid, yahoo_sym, stooq_sym):
               errors = []
-              for name, fn, sym in (("yahoo", yahoo_series, yahoo_sym), ("stooq", stooq_series, stooq_sym)):
+              for name, fn, sym in (("yahoo", lambda x: yahoo_series(x, "5y"), yahoo_sym), ("stooq", stooq_series, stooq_sym)):
                   if not sym:
                       continue
                   try:
@@ -315,6 +317,84 @@ jobs:
               return {"score": score, "label": label, "rsi": round(rsi, 1), "gap": round(gap, 2)}
 
 
+
+          def signal_labels(c):
+              """Signal label for every session i >= 30, using only data up to i (same rules as the page)."""
+              n = len(c)
+              out = [None] * n
+              if n < 32:
+                  return out
+              g = l = 0.0
+              for i in range(1, 15):
+                  d = c[i] - c[i - 1]
+                  if d >= 0:
+                      g += d
+                  else:
+                      l -= d
+              g /= 14
+              l /= 14
+              rsis = [None] * n
+              rsis[14] = 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+              for i in range(15, n):
+                  d = c[i] - c[i - 1]
+                  g = (g * 13 + max(d, 0)) / 14
+                  l = (l * 13 + max(-d, 0)) / 14
+                  rsis[i] = 100.0 if l == 0 else 100 - 100 / (1 + g / l)
+              lr = [0.0] + [math.log(c[i] / c[i - 1]) for i in range(1, n)]
+              for i in range(30, n):
+                  ma = sum(c[i - 19:i + 1]) / 20
+                  gap = (c[i] / ma - 1) * 100
+                  win = lr[i - 19:i + 1]
+                  m = sum(win) / 20
+                  sd = math.sqrt(sum((r - m) ** 2 for r in win) / 19)
+                  c5 = (c[i] / c[i - 5] - 1) * 100
+                  z = c5 / 100 / (sd * math.sqrt(5)) if sd else 0
+                  trend = 1 if gap > 0.5 else -1 if gap < -0.5 else 0
+                  mom = 1 if rsis[i] > 55 else -1 if rsis[i] < 45 else 0
+                  spd = 1 if z > 1 else -1 if z < -1 else 0
+                  score = trend + mom + spd
+                  out[i] = "up" if score >= 2 else "down" if score <= -2 else "flat"
+              return out
+
+
+          def backtest_stats(c):
+              """Replay the signal: what happened over the next BT_H sessions? [count, sum of % moves, hits]."""
+              labs = signal_labels(c)
+              st = {"up": [0, 0.0, 0], "flat": [0, 0.0, 0], "down": [0, 0.0, 0], "all": [0, 0.0]}
+              for i in range(30, len(c) - BT_H):
+                  lab = labs[i]
+                  if lab is None:
+                      continue
+                  f = (c[i + BT_H] / c[i] - 1) * 100
+                  hit = (lab == "up" and f > 0) or (lab == "down" and f < 0)
+                  st[lab][0] += 1
+                  st[lab][1] += f
+                  st[lab][2] += 1 if hit else 0
+                  st["all"][0] += 1
+                  st["all"][1] += f
+              for k in st:
+                  st[k][1] = round(st[k][1], 3)
+              return st
+
+
+          # ---------------------------------------------------------------- health
+          def run_health(items, problems, alerts, today):
+              """One alert per day if prices could not be refreshed for several commodities."""
+              topic = os.environ.get("NTFY_TOPIC", "").strip()
+              bad = [k for k, it in items.items() if it.get("stale")]
+              fails = [p for p in problems if not p.startswith("ctx")]
+              if not topic or (len(bad) < 3 and len(fails) < 3) or alerts.get("health") == today:
+                  return alerts
+              try:
+                  ntfy_send(topic, "Commodity Pulse : collecte en difficulté",
+                            "%d matières n’ont pas pu être mises à jour. Vérifiez l’onglet Actions du dépôt." % max(len(bad), len(fails)),
+                            ["rotating_light"])
+                  alerts["health"] = today
+                  log("alerts: health alert sent")
+              except Exception as e:
+                  log("alerts: health alert failed: %s" % e)
+              return alerts
+
           # ---------------------------------------------------------------- alerts
           def ntfy_send(topic, title, message, tags):
               body = json.dumps({"topic": topic, "title": title, "message": message,
@@ -331,7 +411,8 @@ jobs:
               """At most one signal alert and one big-move alert per commodity per day."""
               topic = os.environ.get("NTFY_TOPIC", "").strip()
               old_state = prev.get("alerts", {})
-              state = {"signal": dict(old_state.get("signal", {})), "move": dict(old_state.get("move", {}))}
+              state = {"signal": dict(old_state.get("signal", {})), "move": dict(old_state.get("move", {})),
+                       "health": old_state.get("health")}
               if not topic:
                   log("alerts: NTFY_TOPIC not set, skipped")
                   return state
@@ -387,6 +468,8 @@ jobs:
               prev = load_previous()
               prev_items, prev_ctx = prev.get("items", {}), prev.get("ctx", {})
               items, ctx, fresh, problems = {}, {}, 0, []
+              prev_bt = prev.get("bt", {})
+              bt_per, bt_span = {}, {}
               now = datetime.now(timezone.utc)
               today = now.strftime("%Y-%m-%d")
 
@@ -395,6 +478,12 @@ jobs:
                       it = fetch_commodity(cid, ysym, ssym)
                       age = (now.date() - datetime.strptime(it["d"][-1], "%Y-%m-%d").date()).days
                       it["stale"] = age > MAX_AGE_DAYS
+                      try:
+                          bt_per[cid] = backtest_stats(it["c"])
+                          bt_span[cid] = (datetime.strptime(it["d"][-1], "%Y-%m-%d") - datetime.strptime(it["d"][0], "%Y-%m-%d")).days
+                      except Exception as e:
+                          log("bt    %-9s %s" % (cid, e))
+                      it["d"], it["c"] = it["d"][-KEEP:], it["c"][-KEEP:]
                       items[cid] = it
                       fresh += 1
                       log("ok    %-9s %s  last %s = %s" % (cid, it["src"], it["d"][-1], it["c"][-1]))
@@ -406,6 +495,10 @@ jobs:
                           old["stale"] = True
                           items[cid] = old
                   time.sleep(0.2)
+              for cid in COMMODITIES:
+                  if cid not in bt_per and cid in prev_bt.get("per", {}):
+                      bt_per[cid] = prev_bt["per"][cid]
+                      bt_span[cid] = prev_bt.get("span", {}).get(cid, 0)
 
               jobs = [(k, (lambda s=s: ctx_yahoo(s))) for k, s in CONTEXT_YAHOO.items()]
               jobs += [("real", ctx_real_yield), ("eia", ctx_crude_stocks), ("cot", ctx_cot_gold)]
@@ -436,12 +529,14 @@ jobs:
                   log("alerts: unexpected error: %s" % e)
                   alerts = prev.get("alerts", {"signal": {}, "move": {}})
 
+              alerts = run_health(items, problems, alerts, today)
               out = {
                   "updated": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
                   "items": items,
                   "ctx": ctx,
                   "signals": signals,
                   "alerts": alerts,
+                  "bt": {"h": BT_H, "per": bt_per, "span": bt_span},
                   "problems": problems,
               }
               with open(OUT, "w", encoding="utf-8") as f:
